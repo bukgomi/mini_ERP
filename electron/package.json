@@ -1,0 +1,39 @@
+{
+  "name": "mini-erp",
+  "productName": "미니 ERP",
+  "version": "1.0.0",
+  "description": "중소기업·소상공인을 위한 무료 업무 관리 프로그램",
+  "main": "main.js",
+  "author": "미니 ERP contributors",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "prebuild-app": "node ../build.js",
+    "dist": "node ../build.js && node copy-app.js && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "kr.minierp.app",
+    "productName": "미니 ERP",
+    "files": [
+      "main.js",
+      "preload.js",
+      "app.html",
+      "icon.ico"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "미니 ERP",
+      "artifactName": "미니ERP-Setup-${version}.${ext}"
+    }
+  }
+}
