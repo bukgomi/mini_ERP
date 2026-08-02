@@ -208,6 +208,9 @@ function documentForm(type, docId, saleId) {
       '<div style="margin-top:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
       '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-two" checked style="width:auto"> 2부 인쇄 (공급자+공급받는자)</label>' +
       '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-vat"' + (showVat ? " checked" : "") + ' style="width:auto"> 세액(부가세) 별도 표시</label>' +
+      // 직접 발행(매출 건 미연결)일 때만: 발행과 동시에 매출 장부 자동 등록
+      (!doc && !sale ?
+        '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-autosale" checked style="width:auto"> 매출 장부에 자동 등록</label>' : "") +
       '<span class="sub">세액 켬 = 공급가액·세액 열 분리 / 끔 = 단가에 포함(기존 양식) · 정산 값은 발행 시점에 고정 저장</span></div>'
       : "") +
 
@@ -412,6 +415,31 @@ function documentForm(type, docId, saleId) {
         // seq 카운터 (참고용)
         state.seq[type === "quote" ? "quote" : "statement"]++;
       }
+
+      // ---- 명세서 직접 발행 시 매출 장부 자동 등록 ----
+      // (매출 화면에서 발행한 경우는 이미 연결된 매출이 있으므로 만들지 않는다)
+      const autoSaleChk = overlay.querySelector("#dcf-autosale");
+      if (isStmt && !doc && !sale && autoSaleChk && autoSaleChk.checked) {
+        const a = stmtAmounts(cleanLines, discountRate, showVat);
+        const newSale = {
+          id: uid("s"),
+          date, partnerId,
+          // 품명이 등록 품목과 일치하면 연결 → 재고 연동
+          lines: cleanLines.map((l) => {
+            const it = state.items.find((x) => x.name === l.name);
+            return { itemId: it ? it.id : "", name: l.name, qty: l.qty, unitPrice: l.unitPrice };
+          }),
+          supply: a.total - a.vat, vat: a.vat, total: a.total,
+          vatIncluded: showVat,
+          status: "완료", // 명세서 발행 = 물건이 나감 → 재고 차감 확정
+          payments: [],   // 수금은 이중 계산 방지를 위해 자동 기록하지 않음 — [수금] 버튼으로 입력
+          memo: "거래명세서 " + saved.no + " 발행 시 자동 등록"
+        };
+        state.sales.push(newSale);
+        saved.saleId = newSale.id; // 명세서 ↔ 매출 연결 (재발행 시 중복 생성 방지)
+        toast("매출 장부에 " + fmtMoney(newSale.total) + "원이 자동 등록되었습니다. 수금은 매출 목록의 [수금] 버튼으로 기록하세요.", "success");
+      }
+
       markDirty();
       overlay.remove();
       renderApp();
