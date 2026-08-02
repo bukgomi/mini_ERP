@@ -4,6 +4,28 @@
 
 let currentView = "dashboard"; // 현재 보고 있는 모듈 ID
 
+/* ---------- 화면 테마 (PC별 설정 — localStorage에 저장, 데이터 파일과 무관) ---------- */
+
+/** 저장된 테마·강조색을 html 태그에 적용 */
+function applyTheme() {
+  const theme = localStorage.getItem("erp-theme") || "auto";   // auto | light | dark
+  const accent = localStorage.getItem("erp-accent") || "blue"; // blue | green | purple | red
+  const rootEl = document.documentElement;
+  if (theme === "auto") rootEl.removeAttribute("data-theme");
+  else rootEl.setAttribute("data-theme", theme);
+  if (accent === "blue") rootEl.removeAttribute("data-accent");
+  else rootEl.setAttribute("data-accent", accent);
+}
+applyTheme(); // 스크립트 로드 즉시 적용 (화면 깜빡임 방지)
+
+/** 설정 화면에서 테마 변경 시 호출 */
+function setTheme(theme, accent) {
+  if (theme) localStorage.setItem("erp-theme", theme);
+  if (accent) localStorage.setItem("erp-accent", accent);
+  applyTheme();
+  renderApp(); // 설정 화면의 선택 표시 갱신
+}
+
 /** 화면 전환 */
 function navigate(viewId) {
   if (!MODULES[viewId] || !isModuleOn(viewId)) viewId = "dashboard";

@@ -36,29 +36,61 @@
   --radius: 12px;
 }
 
+/* ---------- 다크 테마 토큰 ----------
+ * 적용 조건 2가지:
+ *  ① 시스템이 다크모드이고 사용자가 "밝게"로 강제하지 않았을 때
+ *  ② 사용자가 설정에서 "어둡게"를 선택했을 때 (html[data-theme="dark"])
+ * ------------------------------------ */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --accent: #3987e5;
     --accent-hover: #5599ea;
     --accent-soft: rgba(57, 135, 229, 0.16);
-
     --sidebar-bg: #1a1e26;
     --sidebar-border: #2a3140;
-
     --bg: #131720;
     --card-bg: #1e242f;
     --text: #e6eaf0;
     --text-dim: #8b95a5;
     --border: #313947;
-
     --chart-sales: #3987e5;     /* 다크모드 차트색 (SPEC 고정) */
     --chart-purchase: #d95926;
-
     --input-bg: #171c25;
     --hover-bg: #262e3b;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.55);
   }
+}
+:root[data-theme="dark"] {
+  --accent: #3987e5;
+  --accent-hover: #5599ea;
+  --accent-soft: rgba(57, 135, 229, 0.16);
+  --sidebar-bg: #1a1e26;
+  --sidebar-border: #2a3140;
+  --bg: #131720;
+  --card-bg: #1e242f;
+  --text: #e6eaf0;
+  --text-dim: #8b95a5;
+  --border: #313947;
+  --chart-sales: #3987e5;
+  --chart-purchase: #d95926;
+  --input-bg: #171c25;
+  --hover-bg: #262e3b;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- 강조색 선택 (설정 → 화면 테마) ----------
+ * 차트 색(매출 파랑/매입 주황)은 SPEC 고정이므로 바꾸지 않는다.
+ * ---------------------------------------------------- */
+:root[data-accent="green"] {
+  --accent: #2f9e44; --accent-hover: #27853a; --accent-soft: rgba(47, 158, 68, 0.11);
+}
+:root[data-accent="purple"] {
+  --accent: #7048e8; --accent-hover: #5f3ccc; --accent-soft: rgba(112, 72, 232, 0.11);
+}
+:root[data-accent="red"] {
+  --accent: #e5484d; --accent-hover: #cc3a3f; --accent-soft: rgba(229, 72, 77, 0.1);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -163,9 +195,11 @@ html, body {
 .banner.warn { background: #fdf3dc; color: #7a5b13; border-bottom: 1px solid #eedcab; }
 .banner.info { background: #e3edfa; color: #1d4e89; border-bottom: 1px solid #c3d8f0; }
 @media (prefers-color-scheme: dark) {
-  .banner.warn { background: #3d3420; color: #eecd7f; border-bottom-color: #56491f; }
-  .banner.info { background: #1d2c40; color: #8ab4e8; border-bottom-color: #2c415d; }
+  :root:not([data-theme="light"]) .banner.warn { background: #3d3420; color: #eecd7f; border-bottom-color: #56491f; }
+  :root:not([data-theme="light"]) .banner.info { background: #1d2c40; color: #8ab4e8; border-bottom-color: #2c415d; }
 }
+:root[data-theme="dark"] .banner.warn { background: #3d3420; color: #eecd7f; border-bottom-color: #56491f; }
+:root[data-theme="dark"] .banner.info { background: #1d2c40; color: #8ab4e8; border-bottom-color: #2c415d; }
 
 #content { flex: 1; overflow-y: auto; padding: 22px 24px 40px; }
 
@@ -302,7 +336,15 @@ table.grid td.actions { white-space: nowrap; text-align: right; }
   position: absolute; inset: 0; border-radius: 24px; cursor: pointer;
   background: #cfd6df; transition: 0.2s;
 }
-@media (prefers-color-scheme: dark) { .switch .slider { background: #3d4655; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .switch .slider { background: #3d4655; } }
+:root[data-theme="dark"] .switch .slider { background: #3d4655; }
+
+/* 테마 색상 선택 원형 견본 (설정 화면) */
+.theme-swatch {
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+  border: 3px solid transparent; display: inline-block;
+}
+.theme-swatch.sel { border-color: var(--text); }
 .switch .slider::before {
   content: ""; position: absolute; width: 18px; height: 18px; border-radius: 50%;
   left: 3px; top: 3px; background: #fff; transition: 0.2s;

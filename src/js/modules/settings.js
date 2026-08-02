@@ -23,6 +23,19 @@ function renderSettings(el) {
     '<div style="margin-top:12px"><button class="btn btn-primary" id="btn-save-company">회사 정보 저장</button></div>' +
     "</div>" +
 
+    // ---- 화면 테마 (PC별 설정) ----
+    '<div class="card"><h3>화면 테마 <span class="sub">이 컴퓨터에만 적용됩니다 (데이터와 무관)</span></h3>' +
+    '<div style="display:flex;gap:26px;flex-wrap:wrap;align-items:center">' +
+    '<div class="form-field" style="min-width:200px"><label>밝기</label><select id="theme-mode">' +
+    [["auto", "시스템 설정 따라가기 (자동)"], ["light", "밝은 테마"], ["dark", "어두운 테마"]].map(([v, t]) =>
+      '<option value="' + v + '"' + ((localStorage.getItem("erp-theme") || "auto") === v ? " selected" : "") + ">" + t + "</option>").join("") +
+    "</select></div>" +
+    '<div class="form-field"><label>강조색</label><div style="display:flex;gap:10px;align-items:center;height:36px">' +
+    [["blue", "#2a78d6", "파랑"], ["green", "#2f9e44", "초록"], ["purple", "#7048e8", "보라"], ["red", "#e5484d", "레드"]].map(([v, c, t]) =>
+      '<span class="theme-swatch' + ((localStorage.getItem("erp-accent") || "blue") === v ? " sel" : "") +
+      '" data-accent-pick="' + v + '" style="background:' + c + '" title="' + t + '"></span>').join("") +
+    "</div></div></div></div>" +
+
     // ---- 모듈 토글 ----
     '<div class="card"><h3>모듈 켜기/끄기 <span class="sub">모듈을 꺼도 데이터는 삭제되지 않습니다. 다시 켜면 그대로 보입니다.</span></h3>' +
     '<div id="module-toggles">' + moduleTogglesHTML() + "</div></div>" +
@@ -98,6 +111,11 @@ function renderSettings(el) {
 
   // 백업에서 복원
   el.querySelector("#btn-restore-backup").addEventListener("click", showRestoreBackupModal);
+
+  // 화면 테마 (PC별 설정 — 읽기 전용 모드에서도 변경 가능)
+  el.querySelector("#theme-mode").addEventListener("change", (e) => setTheme(e.target.value, null));
+  el.querySelectorAll("[data-accent-pick]").forEach((s) =>
+    s.addEventListener("click", () => setTheme(null, s.getAttribute("data-accent-pick"))));
 
   // 경비 분류 추가/삭제
   el.querySelector("#btn-add-cat").addEventListener("click", async () => {
