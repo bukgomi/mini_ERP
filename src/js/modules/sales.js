@@ -52,6 +52,11 @@ function renderTradeList(kind, el) {
     '<input type="date" id="tf-from" value="' + esc(f.from) + '">' +
     "<span>~</span>" +
     '<input type="date" id="tf-to" value="' + esc(f.to) + '">' +
+    // 기간 빠른 선택 (이번 달 / 지난 달 / 올해 / 작년 / 전체)
+    '<span style="display:flex;gap:4px">' +
+    ["이번 달", "지난 달", "올해", "작년", "전체"].map((t) =>
+      '<button class="btn btn-sm" data-range="' + t + '">' + t + "</button>").join("") +
+    "</span>" +
     '<select id="tf-partner"><option value="">전체 거래처</option>' +
     state.partners.map((p) => '<option value="' + p.id + '"' + (f.partnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
     "</select>" +
@@ -70,6 +75,26 @@ function renderTradeList(kind, el) {
   // 필터 이벤트
   el.querySelector("#tf-from").addEventListener("change", (e) => { f.from = e.target.value; renderApp(); });
   el.querySelector("#tf-to").addEventListener("change", (e) => { f.to = e.target.value; renderApp(); });
+  // 기간 빠른 선택 버튼
+  el.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const pad = (n) => String(n).padStart(2, "0");
+    switch (b.getAttribute("data-range")) {
+      case "이번 달": f.from = monthStart(); f.to = monthEnd(); break;
+      case "지난 달": {
+        const d = new Date(y, now.getMonth() - 1, 1);           // 지난달 1일
+        const last = new Date(y, now.getMonth(), 0).getDate();  // 지난달 말일
+        f.from = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-01";
+        f.to = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(last);
+        break;
+      }
+      case "올해": f.from = y + "-01-01"; f.to = y + "-12-31"; break;
+      case "작년": f.from = (y - 1) + "-01-01"; f.to = (y - 1) + "-12-31"; break;
+      case "전체": f.from = ""; f.to = ""; break;
+    }
+    renderApp();
+  }));
   el.querySelector("#tf-partner").addEventListener("change", (e) => { f.partnerId = e.target.value; renderApp(); });
   el.querySelector("#tf-search").addEventListener("input", (e) => {
     f.search = e.target.value; renderApp();

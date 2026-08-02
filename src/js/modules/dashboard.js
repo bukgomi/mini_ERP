@@ -7,10 +7,14 @@
 
 function renderDashboard(el) {
   const ym = yearMonthOf(today()); // 이번 달
+  const thisYear = today().slice(0, 4);
   const monthSales = state.sales.filter((s) => yearMonthOf(s.date) === ym);
   const monthPurchases = state.purchases.filter((s) => yearMonthOf(s.date) === ym);
   const salesTotal = sum(monthSales, (s) => s.total);
   const purchaseTotal = sum(monthPurchases, (s) => s.total);
+  // 올해 누계 (1월 1일부터 오늘까지)
+  const yearSalesTotal = sum(state.sales.filter((s) => (s.date || "").slice(0, 4) === thisYear), (s) => s.total);
+  const yearPurchaseTotal = sum(state.purchases.filter((s) => (s.date || "").slice(0, 4) === thisYear), (s) => s.total);
 
   // 미수금 총액 (거래처별 잔액 합 = 건별 합 + 기초 이월)
   const totalUnpaid = sum(state.partners, (p) => Math.max(partnerBalance(p.id, "sales"), 0)) +
@@ -28,6 +32,10 @@ function renderDashboard(el) {
   if (isModuleOn("sales") && isModuleOn("purchases")) html += tile("차익 (매출−매입)", fmtMoney(salesTotal - purchaseTotal) + "원", salesTotal - purchaseTotal >= 0 ? "blue" : "red", "📈");
   if (isModuleOn("payments")) html += tile("미수금 총액", fmtMoney(totalUnpaid) + "원", totalUnpaid > 0 ? "red" : "", "💳");
   if (isModuleOn("shipping")) html += tile("미완료 배송", fmtMoney(pendingShip) + "건", pendingShip > 0 ? "red" : "", "🚚");
+  // 올해 누계 타일
+  if (isModuleOn("sales")) html += tile(thisYear + "년 매출 누계", fmtMoney(yearSalesTotal) + "원", "blue", "📅");
+  if (isModuleOn("sales") && isModuleOn("purchases"))
+    html += tile(thisYear + "년 차익 (매출−매입)", fmtMoney(yearSalesTotal - yearPurchaseTotal) + "원", yearSalesTotal - yearPurchaseTotal >= 0 ? "blue" : "red", "🏆");
   html += "</div>";
 
   // ---- 12개월 차트 ----
