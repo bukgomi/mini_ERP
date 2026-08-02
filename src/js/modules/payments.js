@@ -8,6 +8,7 @@ let payTab = "recv";        // recv=수금(매출) | pay=지급(매입) | ledger
 let payLedgerPartnerId = ""; // 원장 보기 거래처
 let payLedgerFrom = "";      // 원장 기간
 let payLedgerTo = "";
+let payLedgerKind = "sales"; // 원장 구분: sales=매출·수금 | purchases=매입·지급
 
 function renderPayments(el) {
   el.innerHTML =
@@ -208,10 +209,15 @@ function renderPartnerLedger(el) {
   if (!payLedgerFrom) payLedgerFrom = today().slice(0, 4) + "-01-01"; // 기본: 올해 1월 1일
   if (!payLedgerTo) payLedgerTo = today();
 
+  const isRecv = payLedgerKind === "sales";
   el.innerHTML =
     '<div class="filter-bar">' +
     '<select id="lg-partner"><option value="">거래처 선택</option>' +
     state.partners.map((p) => '<option value="' + p.id + '"' + (payLedgerPartnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
+    "</select>" +
+    '<select id="lg-kind">' +
+    '<option value="sales"' + (isRecv ? " selected" : "") + ">매출·수금 (미수금)</option>" +
+    '<option value="purchases"' + (!isRecv ? " selected" : "") + ">매입·지급 (미지급금)</option>" +
     "</select>" +
     '<input type="date" id="lg-from" value="' + esc(payLedgerFrom) + '"> <span>~</span> ' +
     '<input type="date" id="lg-to" value="' + esc(payLedgerTo) + '">' +
@@ -220,6 +226,7 @@ function renderPartnerLedger(el) {
     '<div id="lg-table"></div>';
 
   el.querySelector("#lg-partner").addEventListener("change", (e) => { payLedgerPartnerId = e.target.value; renderApp(); });
+  el.querySelector("#lg-kind").addEventListener("change", (e) => { payLedgerKind = e.target.value; renderApp(); });
   el.querySelector("#lg-from").addEventListener("change", (e) => { payLedgerFrom = e.target.value; renderApp(); });
   el.querySelector("#lg-to").addEventListener("change", (e) => { payLedgerTo = e.target.value; renderApp(); });
 
@@ -228,11 +235,13 @@ function renderPartnerLedger(el) {
     tableEl.innerHTML = '<div class="card"><p class="empty-msg">거래처를 선택하면 원장이 표시됩니다.</p></div>';
     return;
   }
-  const rows = buildLedgerRows(payLedgerPartnerId, payLedgerFrom, payLedgerTo, "sales");
+  const debitLabel = isRecv ? "매출(차변)" : "매입(차변)";
+  const creditLabel = isRecv ? "입금(대변)" : "지급(대변)";
+  const rows = buildLedgerRows(payLedgerPartnerId, payLedgerFrom, payLedgerTo, payLedgerKind);
   tableEl.innerHTML =
-    '<div class="card"><h3>' + esc(partnerName(payLedgerPartnerId)) + " 원장 <span class=\"sub\">(매출·수금)</span></h3>" +
+    '<div class="card"><h3>' + esc(partnerName(payLedgerPartnerId)) + ' 원장 <span class="sub">(' + (isRecv ? "매출·수금" : "매입·지급") + ")</span></h3>" +
     '<div class="table-wrap"><table class="grid">' +
-    '<thead><tr><th>날짜</th><th>적요</th><th class="num">매출(차변)</th><th class="num">입금(대변)</th><th class="num">잔액</th></tr></thead><tbody>' +
+    '<thead><tr><th>날짜</th><th>적요</th><th class="num">' + debitLabel + '</th><th class="num">' + creditLabel + '</th><th class="num">잔액</th></tr></thead><tbody>' +
     rows.map((r) =>
       "<tr" + (r.isCarry ? ' class="subtotal-row"' : "") + "><td>" + esc(r.date) + "</td><td>" + esc(r.desc) + "</td>" +
       '<td class="num">' + (r.debit ? fmtMoney(r.debit) : "") + "</td>" +
@@ -241,8 +250,8 @@ function renderPartnerLedger(el) {
     "</tbody></table></div></div>";
 
   el.querySelector("#lg-csv").addEventListener("click", () => {
-    downloadCSV("원장_" + safeFileName(partnerName(payLedgerPartnerId)) + "_" + payLedgerFrom + "~" + payLedgerTo + ".csv", [
-      ["날짜", "적요", "매출", "입금", "잔액"],
+    downloadCSV("원장_" + safeFileName(partnerName(payLedgerPartnerId)) + "_" + (isRecv ? "매출수금" : "매입지급") + "_" + payLedgerFrom + "~" + payLedgerTo + ".csv", [
+      ["날짜", "적요", debitLabel, creditLabel, "잔액"],
       ...rows.map((r) => [r.date, r.desc, r.debit || "", r.credit || "", r.balance])
     ]);
   });

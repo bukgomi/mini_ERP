@@ -342,15 +342,17 @@ function renderYearClosing(el) {
   const nowYear = new Date().getFullYear();
   const canClose = nowYear > fy; // 회계연도(1/1~12/31)가 지나야 마감 가능
 
-  // 마감 시 이월될 값 미리 계산
+  // 마감 시 이월될 값 미리 계산 — 반드시 회계연도 말(12/31) 기준으로 자른다.
+  // 새해에 미리 입력한 거래는 마감 후에도 파일에 남으므로, 이월값에 포함하면 이중 계산이 된다.
+  const cutoffNext = (fy + 1) + "-01-01"; // "이 날짜 이전" = fy년 12/31까지
   const partnerPreviews = state.partners.map((p) => {
-    const recv = partnerBalance(p.id, "sales");
-    const pay = partnerBalance(p.id, "purchases");
+    const recv = partnerBalanceBefore(p.id, cutoffNext, "sales");
+    const pay = partnerBalanceBefore(p.id, cutoffNext, "purchases");
     return { p, next: recv - pay };
   }).filter((x) => x.next !== 0);
-  const stockPreviews = state.items.map((i) => ({ i, stock: currentStock(i.id) }));
+  const stockPreviews = state.items.map((i) => ({ i, stock: currentStockAsOf(i.id, fy + "-12-31") }));
   let cashFinal = Number(state.cashOpening) || 0;
-  buildCashEntries().forEach((r) => { cashFinal += r.kind === "입금" ? r.amount : -r.amount; });
+  buildCashEntries().forEach((r) => { if ((r.date || "") <= fy + "-12-31") cashFinal += r.kind === "입금" ? r.amount : -r.amount; });
 
   el.innerHTML =
     '<div class="card"><h3>연도 마감 (이월)</h3>' +
@@ -415,15 +417,18 @@ async function executeYearClosing(fy) {
     await storage.writeFile(BACKUP_DIR + "/erp-preclose-" + fy + ".json", preCloseSnapshot);
     localStorage.setItem("erp-last-close-undo", String(fy)); // 되돌리기 가능 표시
 
-    // ① 이월 값 계산
+    // ① 이월 값 계산 — 회계연도 말(12/31) 기준으로 자른다.
+    // 새해에 미리 입력한 거래는 마감 후에도 남으므로 여기 포함하면 이중 계산 (미리보기와 동일 기준)
+    const cutoffDate = fy + "-12-31";
+    const cutoffNext = (fy + 1) + "-01-01";
     const nextOpenings = {};
     state.partners.forEach((p) => {
-      nextOpenings[p.id] = partnerBalance(p.id, "sales") - partnerBalance(p.id, "purchases");
+      nextOpenings[p.id] = partnerBalanceBefore(p.id, cutoffNext, "sales") - partnerBalanceBefore(p.id, cutoffNext, "purchases");
     });
     const nextStocks = {};
-    state.items.forEach((i) => { nextStocks[i.id] = currentStock(i.id); });
+    state.items.forEach((i) => { nextStocks[i.id] = currentStockAsOf(i.id, cutoffDate); });
     let cashFinal = Number(state.cashOpening) || 0;
-    buildCashEntries().forEach((r) => { cashFinal += r.kind === "입금" ? r.amount : -r.amount; });
+    buildCashEntries().forEach((r) => { if ((r.date || "") <= cutoffDate) cashFinal += r.kind === "입금" ? r.amount : -r.amount; });
 
     // ② 아카이브 저장
     await storage.writeFile(ARCHIVE_DIR + "/erp-" + fy + ".json", JSON.stringify(state, null, 2));

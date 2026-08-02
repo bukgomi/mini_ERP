@@ -178,6 +178,29 @@ function partnerBalanceBefore(partnerId, dateStr, kind) {
   return bal;
 }
 
+/**
+ * 기준일까지의 재고 (연도 마감 이월용)
+ * cutoff(YYYY-MM-DD) 이하 날짜의 매입/매출/조정만 반영한다.
+ * 새해에 미리 입력한 거래는 기록이 그대로 남으므로 이월값에 포함하면 이중 계산이 된다.
+ */
+function currentStockAsOf(itemId, cutoff) {
+  const item = getItem(itemId);
+  if (!item) return 0;
+  let stock = Number(item.baseStock) || 0;
+  state.purchases.forEach((p) => {
+    if (p.status === "입고완료" && p.date <= cutoff) {
+      (p.lines || []).forEach((ln) => { if (ln.itemId === itemId) stock += Number(ln.qty) || 0; });
+    }
+  });
+  state.sales.forEach((s) => {
+    if (isSaleStockDeducted(s) && s.date <= cutoff) {
+      (s.lines || []).forEach((ln) => { if (ln.itemId === itemId) stock -= Number(ln.qty) || 0; });
+    }
+  });
+  state.adjustments.forEach((a) => { if (a.itemId === itemId && (a.date || "") <= cutoff) stock += Number(a.qty) || 0; });
+  return stock;
+}
+
 /** 미수금 연령(일수) 계산의 기준: 매출 건 date → 오늘 */
 function agingBucket(dateStr) {
   const d = daysBetween(dateStr, today());

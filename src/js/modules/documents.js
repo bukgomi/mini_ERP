@@ -408,7 +408,14 @@ function documentForm(type, docId, saleId) {
       }
 
       let saved;
-      if (doc) { Object.assign(doc, data); saved = doc; }
+      if (doc) {
+        Object.assign(doc, data);
+        saved = doc;
+        // 연결된 매출이 있는 문서를 수정한 경우: 매출 건은 자동으로 바뀌지 않음을 안내
+        if (doc.saleId && getSale(doc.saleId)) {
+          toast("문서만 갱신되었습니다. 연결된 매출 건 금액은 자동으로 바뀌지 않으니, 필요하면 매출 관리에서 수정하세요.", "info");
+        }
+      }
       else {
         saved = Object.assign({ id: uid("d"), no: nextDocNo(type) }, data);
         state.documents.push(saved);
