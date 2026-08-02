@@ -32,6 +32,7 @@ function renderShipping(el) {
   el.innerHTML =
     '<div class="page-title">🚚 배송·출고 관리' +
     '<span class="spacer"></span>' +
+    '<label class="btn">📥 CJ 출고 엑셀 업로드<input type="file" id="ship-import" accept=".xlsx,.csv" style="display:none"></label>' +
     '<button class="btn btn-primary" id="btn-add-ship">+ 배송 등록</button></div>' +
 
     '<div class="tabs">' +
@@ -79,6 +80,10 @@ function renderShipping(el) {
     s.focus(); s.setSelectionRange(s.value.length, s.value.length);
   });
   el.querySelector("#btn-add-ship").addEventListener("click", () => shipmentForm(null, null));
+  el.querySelector("#ship-import").addEventListener("change", (e) => {
+    if (e.target.files.length) importShipmentsFile(e.target.files[0]);
+    e.target.value = "";
+  });
   el.querySelectorAll("[data-sh-next]").forEach((b) => b.addEventListener("click", () => advanceShipment(b.getAttribute("data-sh-next"))));
   el.querySelectorAll("[data-sh-edit]").forEach((b) => b.addEventListener("click", () => shipmentForm(b.getAttribute("data-sh-edit"), null)));
   el.querySelectorAll("[data-sh-del]").forEach((b) => b.addEventListener("click", () => deleteShipment(b.getAttribute("data-sh-del"))));
@@ -202,6 +207,174 @@ function shipmentForm(id, saleId) {
       overlay.remove();
       navigate("shipping");
       toast(id ? "배송 건을 수정했습니다." : "배송 건이 등록되었습니다.", "success");
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
+/* ---------- CJ대한통운 출고 엑셀 일괄 등록 ----------
+ * CJ 시스템에서 내려받은 출고(발송) 엑셀을 그대로 올리면 배송 건이 등록된다.
+ * 열 이름이 조금 달라도(운송장번호/송장번호, 받는분/수하인명 등) 자동 인식.
+ * ---------------------------------------------------- */
+
+/** 엑셀 전화번호 보정 — 숫자 셀이면 앞자리 0이 사라지므로 되살린다 (1012345678 → 010-...) */
+function fixPhoneCell(v) {
+  if (v == null || v === "") return "";
+  let s = String(v).replace(/\.0$/, "").trim();
+  if (/^1[016789]\d{7,8}$/.test(s)) s = "0" + s;   // 휴대폰: 10xxxxxxxx → 010...
+  else if (/^[2-6]\d{7,9}$/.test(s)) s = "0" + s;  // 지역번호: 2xxxxxxx → 02...
+  return s;
+}
+
+async function importShipmentsFile(file) {
+  if (guardReadOnly()) return;
+  let rows;
+  try {
+    rows = await parseSpreadsheetFile(file);
+  } catch (err) { toast(err.message, "error"); return; }
+  if (!rows.length) { toast("파일에 데이터가 없습니다.", "error"); return; }
+
+  const COLS = [
+    ["운송장번호", "trackingNo", ["송장번호", "운송장 번호", "송장 번호", "운송장NO", "운송장No", "운송장no"]],
+    ["받는분", "receiver", ["받는분성명", "수하인명", "수하인", "수취인", "수취인명", "수령인", "받으시는분", "고객명", "받는사람"]],
+    ["전화", "phone", ["받는분전화번호", "받는분 전화번호", "수하인전화번호", "수취인전화번호", "받는분전화", "전화번호", "연락처", "휴대폰번호", "핸드폰", "받는분휴대폰"]],
+    ["주소", "address", ["받는분주소", "받는분 주소", "수하인주소", "수취인주소", "배송주소", "받는분주소(전체)"]],
+    ["날짜", "date", ["접수일자", "접수일", "발송일", "발송일자", "출고일자", "출고일", "등록일", "운송장출력일"]],
+    ["품목", "itemName", ["품목명", "상품명", "품명", "내품명", "내용물"]],
+    ["수량", "qty", ["내품수량", "박스수량", "수량(개)"]]
+  ];
+  // CJ 파일마다 헤더가 다르므로 여러 기준 열로 시도
+  let mapped = null;
+  for (const anchor of ["운송장번호", "송장번호", "받는분", "수하인명", "받는분성명", "수취인명"]) {
+    mapped = mapSpreadsheetHeader(rows, COLS, anchor);
+    if (mapped) break;
+  }
+  if (!mapped || (mapped.colMap.receiver === undefined && mapped.colMap.trackingNo === undefined)) {
+    toast('헤더를 찾을 수 없습니다. "운송장번호"와 "받는분(수하인명)" 열이 있는 CJ 출고 엑셀을 올려주세요.', "error");
+    return;
+  }
+  const { headerIdx, colMap } = mapped;
+
+  const parsed = [];  // { data, dupTrack, matchSale, rowNo }
+  const errors = [];
+  const seenTrack = new Set();
+
+  rows.slice(headerIdx + 1).forEach((r, i) => {
+    const rowNo = headerIdx + i + 2;
+    const get = (f) => colMap[f] === undefined ? "" : String(r[colMap[f]] ?? "").trim();
+    if (!r.some((c) => String(c).trim() !== "")) return;
+
+    const receiver = get("receiver");
+    const trackingNo = get("trackingNo").replace(/\.0$/, "").replace(/[^0-9]/g, "");
+    if (!receiver) { errors.push(rowNo + "행: 받는분이 비어 있어 건너뜁니다."); return; }
+
+    // 파일 안 중복 송장
+    if (trackingNo && seenTrack.has(trackingNo)) {
+      errors.push(rowNo + "행: 파일 안에 같은 송장번호(" + trackingNo + ")가 있어 건너뜁니다.");
+      return;
+    }
+    if (trackingNo) seenTrack.add(trackingNo);
+
+    // 기존 배송 건과 송장번호 중복
+    const dupTrack = !!(trackingNo && state.shipments.some((sh) => sh.trackingNo === trackingNo));
+
+    // 매출 건 자동 연결 후보: 받는분 이름 = 거래처 상호, 아직 배송이 연결 안 된 최신 매출
+    let matchSale = null;
+    const partner = state.partners.find((p) => p.name === receiver);
+    if (partner) {
+      const linkedSaleIds = new Set(state.shipments.map((sh) => sh.saleId).filter(Boolean));
+      matchSale = state.sales
+        .filter((s) => s.partnerId === partner.id && !linkedSaleIds.has(s.id))
+        .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+    }
+
+    const qty = get("qty");
+    const itemName = get("itemName");
+    parsed.push({
+      rowNo, dupTrack, matchSale,
+      data: {
+        date: normalizeDateCell(colMap.date === undefined ? "" : r[colMap.date]) || today(),
+        receiver,
+        phone: fixPhoneCell(colMap.phone === undefined ? "" : r[colMap.phone]),
+        address: get("address"),
+        courier: "CJ대한통운",
+        trackingNo,
+        memo: itemName ? itemName + (qty ? " x" + qty : "") : ""
+      }
+    });
+  });
+
+  if (!parsed.length) {
+    toast("등록할 수 있는 행이 없습니다." + (errors.length ? " (" + errors.length + "건 오류)" : ""), "error");
+    return;
+  }
+
+  const dupCount = parsed.filter((x) => x.dupTrack).length;
+  const matchCount = parsed.filter((x) => x.matchSale && !x.dupTrack).length;
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML =
+    '<div class="modal-box wide"><h3 style="margin-bottom:10px">CJ 출고 엑셀 업로드 미리보기 — ' + esc(file.name) + "</h3>" +
+    '<p style="margin-bottom:10px">등록할 배송 <b>' + (parsed.length - dupCount) + "건</b>" +
+    " · 매출 건 연결 가능 <b>" + matchCount + "건</b>" +
+    (dupCount ? ' · <span style="color:var(--warn)">이미 등록된 송장 ' + dupCount + "건 (건너뜀)</span>" : "") +
+    (errors.length ? ' · <span style="color:var(--danger)">오류 ' + errors.length + "건</span>" : "") + "</p>" +
+
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">' +
+    '<div class="form-field"><label>등록 상태</label><select id="shimp-status">' +
+    '<option value="출고완료" selected>출고완료 (송장 발급 = 출고됨)</option>' +
+    '<option value="상품준비">상품준비</option></select></div>' +
+    (matchCount ?
+      '<label style="display:flex;align-items:center;gap:6px;align-self:end;height:36px">' +
+      '<input type="checkbox" id="shimp-link" checked style="width:auto"> 같은 이름의 거래처 매출 건 자동 연결 (' + matchCount + "건)</label>" : "") +
+    "</div>" +
+    (matchCount ? '<div class="card" style="padding:10px;margin-bottom:10px;border-color:var(--warn)">⚠️ 매출 건에 연결하고 상태가 출고완료면 <b>그 매출의 재고 차감이 확정</b>됩니다.</div>' : "") +
+
+    '<div class="table-wrap" style="max-height:300px;overflow-y:auto"><table class="grid">' +
+    "<thead><tr><th>행</th><th>날짜</th><th>받는분</th><th>전화</th><th>주소</th><th>송장번호</th><th>연결</th><th>판정</th></tr></thead><tbody>" +
+    parsed.map((x) =>
+      "<tr" + (x.dupTrack ? ' style="opacity:0.5"' : "") + "><td>" + x.rowNo + "</td><td>" + esc(x.data.date) + "</td>" +
+      "<td><b>" + esc(x.data.receiver) + "</b></td><td>" + esc(x.data.phone) + "</td>" +
+      '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(x.data.address) + '">' + esc(x.data.address) + "</td>" +
+      "<td>" + esc(x.data.trackingNo) + "</td>" +
+      "<td>" + (x.matchSale ? '<span class="badge green">매출 ' + esc(x.matchSale.date) + " " + fmtMoney(x.matchSale.total) + "원</span>" : "") + "</td>" +
+      "<td>" + (x.dupTrack ? '<span class="badge gray">이미 등록됨</span>' : '<span class="badge blue">신규</span>') + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    (errors.length ?
+      '<details style="margin-top:10px"><summary class="sub" style="cursor:pointer">건너뛴 행 ' + errors.length + "건 보기</summary>" +
+      '<p class="sub" style="margin-top:6px">' + errors.map(esc).join("<br>") + "</p></details>" : "") +
+    '<div class="modal-btns" style="margin-top:16px">' +
+    '<button class="btn" data-act="cancel">취소</button>' +
+    '<button class="btn btn-primary" data-act="import">등록</button></div></div>';
+
+  overlay.addEventListener("click", (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute("data-act");
+    if (e.target === overlay || act === "cancel") { overlay.remove(); return; }
+    if (act === "import") {
+      const status = overlay.querySelector("#shimp-status").value;
+      const doLink = matchCount ? overlay.querySelector("#shimp-link").checked : false;
+      let added = 0, linked = 0;
+      const usedSaleIds = new Set(); // 같은 업로드 안에서 매출 건 이중 연결 방지
+      parsed.forEach((x) => {
+        if (x.dupTrack) return;
+        let saleId = "";
+        if (doLink && x.matchSale && !usedSaleIds.has(x.matchSale.id)) {
+          saleId = x.matchSale.id;
+          usedSaleIds.add(saleId);
+          // 출고완료 등록이면 매출 상태도 연동
+          if (status === "출고완료" && x.matchSale.status === "주문접수") x.matchSale.status = "출고완료";
+          linked++;
+        }
+        state.shipments.push(Object.assign({ id: uid("sh"), saleId, status }, x.data));
+        added++;
+      });
+      markDirty();
+      overlay.remove();
+      renderApp();
+      toast("배송 " + added + "건을 등록했습니다." +
+        (linked ? " (매출 " + linked + "건 연결)" : "") +
+        (dupCount ? " · 중복 송장 " + dupCount + "건 건너뜀" : ""), "success");
     }
   });
   document.body.appendChild(overlay);
