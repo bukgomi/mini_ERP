@@ -1,7 +1,7 @@
 {
   "name": "mini-erp",
   "productName": "미니 ERP",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "중소기업·소상공인을 위한 무료 업무 관리 프로그램",
   "main": "main.js",
   "author": "미니 ERP contributors",
