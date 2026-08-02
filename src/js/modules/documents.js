@@ -122,6 +122,10 @@ function documentForm(type, docId, saleId) {
   const initPartnerId = doc ? doc.partnerId : (sale ? sale.partnerId : "");
   const initDate = doc ? doc.date : today();
 
+  // 현재 선택된 거래처 (검색 콤보박스로 선택)
+  let selPartnerId = initPartnerId;
+  const initPartner = initPartnerId ? getPartner(initPartnerId) : null;
+
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
 
@@ -157,10 +161,11 @@ function documentForm(type, docId, saleId) {
 
     '<div class="form-grid" style="grid-template-columns:repeat(3,1fr)">' +
     '<div class="form-field"><label>발행일</label><input type="date" id="dcf-date" value="' + esc(initDate) + '"></div>' +
-    '<div class="form-field"><label>거래처 (공급받는자) *</label><select id="dcf-partner">' +
-    '<option value="">선택하세요</option>' +
-    state.partners.map((p) => '<option value="' + p.id + '"' + (initPartnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
-    "</select></div>" +
+    // 거래처 검색 콤보박스 — 상호·사업자번호로 검색해 클릭 선택
+    '<div class="form-field" style="position:relative"><label>거래처 (공급받는자) *</label>' +
+    '<input type="text" id="dcf-partner-search" autocomplete="off" placeholder="상호 또는 사업자번호로 검색" value="' +
+    esc(initPartner ? initPartner.name : "") + '">' +
+    '<div id="dcf-partner-list" class="combo-list" style="display:none"></div></div>' +
     '<div class="form-field"><label>공제율 % (옵션)</label><input type="text" class="num" id="dcf-discount" value="' + discountRate + '"></div>' +
     "</div>" +
 
@@ -173,10 +178,21 @@ function documentForm(type, docId, saleId) {
 
     '<div id="dcf-totals" style="margin-top:10px">' + totalsHTML() + "</div>" +
 
+    // ---- 정산 미리보기 (거래명세서 전용) — 거래처 선택 즉시 전잔금이 표시된다 ----
     (isStmt ?
+      '<div class="card" style="margin-top:12px;margin-bottom:0;background:var(--bg)">' +
+      '<h3 style="margin-bottom:8px">정산 (인쇄될 하단 값) <span class="sub">거래처를 선택하면 자동 계산 · 직접 고칠 수 있습니다</span></h3>' +
+      '<div id="dcf-settle-empty" class="sub">👆 거래처를 먼저 선택하세요.</div>' +
+      '<div id="dcf-settle" style="display:none">' +
+      '<div class="form-grid" style="grid-template-columns:repeat(4,1fr)">' +
+      '<div class="form-field"><label>전잔금 (이전 미수금)</label><input type="text" class="num" id="dcf-prev" value="0"></div>' +
+      '<div class="form-field"><label>합계 (전잔금+당일 계)</label><input type="text" class="num" id="dcf-sum" value="0" readonly style="background:var(--bg)"></div>' +
+      '<div class="form-field"><label>입금 (당일 수금)</label><input type="text" class="num" id="dcf-paid" value="0"></div>' +
+      '<div class="form-field"><label>총미수잔액</label><input type="text" class="num" id="dcf-bal" value="0" readonly style="background:var(--bg);font-weight:700"></div>' +
+      "</div></div></div>" +
       '<div style="margin-top:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
       '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-two" checked style="width:auto"> 2부 인쇄 (공급자+공급받는자)</label>' +
-      '<span class="sub">전잔금·입금·총미수잔액은 발행 시점 값으로 문서에 고정 저장됩니다.</span></div>'
+      '<span class="sub">위 정산 값은 발행 시점 값으로 문서에 고정 저장됩니다.</span></div>'
       : "") +
 
     '<div class="form-field" style="margin-top:12px"><label>메모</label>' +
@@ -186,10 +202,86 @@ function documentForm(type, docId, saleId) {
     '<button class="btn" data-act="cancel">취소</button>' +
     '<button class="btn btn-primary" data-act="save">' + (doc ? "갱신 후 인쇄" : "발행 후 인쇄") + "</button></div></div>";
 
+  /* ---------- 거래처 검색 콤보박스 ---------- */
+  const searchInput = () => overlay.querySelector("#dcf-partner-search");
+  const listEl = () => overlay.querySelector("#dcf-partner-list");
+
+  /** 검색어로 거래처 목록 렌더 (상호·사업자번호 부분 일치) */
+  function renderPartnerList(q) {
+    q = (q || "").trim().toLowerCase();
+    const matches = state.partners
+      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.bizNumber || "").replace(/-/g, "").includes(q.replace(/-/g, "")))
+      .slice(0, 30); // 너무 길면 30곳까지만 (검색어를 더 입력하도록)
+    listEl().innerHTML = matches.length
+      ? matches.map((p) => {
+          const bal = partnerBalance(p.id, "sales");
+          return '<div class="combo-item" data-pick="' + p.id + '"><span><b>' + esc(p.name) + "</b>" +
+            (p.bizNumber ? ' <span class="ci-sub">' + esc(p.bizNumber) + "</span>" : "") + "</span>" +
+            '<span class="ci-sub">' + (bal > 0 ? "미수 " + fmtMoney(bal) + "원" : "") + "</span></div>";
+        }).join("")
+      : '<div class="combo-empty">검색 결과가 없습니다. 거래처 관리에서 먼저 등록하세요.</div>';
+    listEl().style.display = "block";
+    // mousedown 사용: blur보다 먼저 처리되어 클릭이 씹히지 않는다
+    listEl().querySelectorAll("[data-pick]").forEach((item) => {
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        selectPartner(item.getAttribute("data-pick"));
+      });
+    });
+  }
+
+  /** 거래처 확정 선택 → 전잔금 즉시 계산 */
+  function selectPartner(pid) {
+    const p = getPartner(pid);
+    if (!p) return;
+    selPartnerId = pid;
+    searchInput().value = p.name;
+    listEl().style.display = "none";
+    refreshSettle(true); // 전잔금·입금 자동 채움
+  }
+
+  /* ---------- 정산 미리보기 (거래명세서 전용) ----------
+   * autofill=true : 전잔금·입금을 장부에서 다시 계산해 채움 (거래처/발행일 변경 시)
+   * autofill=false: 사용자가 고친 값은 유지하고 합계·잔액만 다시 계산
+   * ---------------------------------------------------- */
+  function refreshSettle(autofill) {
+    if (!isStmt) return;
+    const box = overlay.querySelector("#dcf-settle");
+    const empty = overlay.querySelector("#dcf-settle-empty");
+    if (!selPartnerId || !getPartner(selPartnerId)) {
+      box.style.display = "none";
+      empty.style.display = "";
+      return;
+    }
+    box.style.display = "";
+    empty.style.display = "none";
+
+    const date = overlay.querySelector("#dcf-date").value || today();
+    if (autofill) {
+      // 전잔금: 발행일 이전 이 거래처의 미수금 잔액 (기초 이월 포함)
+      overlay.querySelector("#dcf-prev").value = fmtMoney(partnerBalanceBefore(selPartnerId, date, "sales"));
+      // 입금: 발행일 당일 이 거래처의 수금 합계
+      let dayPaid = 0;
+      state.sales.forEach((s) => {
+        if (s.partnerId !== selPartnerId) return;
+        (s.payments || []).forEach((pm) => { if (pm.date === date) dayPaid += Number(pm.amount) || 0; });
+      });
+      overlay.querySelector("#dcf-paid").value = fmtMoney(dayPaid);
+    }
+    // 당일 계(공제 반영) + 입력값으로 합계·총미수잔액 재계산
+    const supply = sum(lines, (l) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
+    const dayTotal = supply - (discountRate ? Math.round(supply * discountRate / 100) : 0);
+    const prev = parseMoney(overlay.querySelector("#dcf-prev").value);
+    const paid = parseMoney(overlay.querySelector("#dcf-paid").value);
+    overlay.querySelector("#dcf-sum").value = fmtMoney(prev + dayTotal);
+    overlay.querySelector("#dcf-bal").value = fmtMoney(prev + dayTotal - paid);
+  }
+
   function refreshLines() {
     overlay.querySelector("#dcf-lines").innerHTML = linesHTML();
     overlay.querySelector("#dcf-totals").innerHTML = totalsHTML();
     bindLineEvents();
+    refreshSettle(false); // 품목이 바뀌면 당일 계도 바뀜
   }
   function bindLineEvents() {
     overlay.querySelectorAll("[data-df]").forEach((inp) => {
@@ -211,6 +303,7 @@ function documentForm(type, docId, saleId) {
         const amtCell = overlay.querySelector('[data-damount="' + i + '"]');
         if (amtCell) amtCell.textContent = fmtMoney((lines[i].qty || 0) * (lines[i].unitPrice || 0));
         overlay.querySelector("#dcf-totals").innerHTML = totalsHTML();
+        refreshSettle(false); // 수량·단가 변경 → 당일 계 갱신
       });
     });
     overlay.querySelectorAll("[data-ddel]").forEach((b) => {
@@ -230,14 +323,36 @@ function documentForm(type, docId, saleId) {
   overlay.querySelector("#dcf-discount").addEventListener("input", (e) => {
     discountRate = Math.max(0, Math.min(100, parseMoney(e.target.value)));
     overlay.querySelector("#dcf-totals").innerHTML = totalsHTML();
+    refreshSettle(false);
   });
+
+  // ---- 거래처 검색 콤보박스 이벤트 ----
+  searchInput().addEventListener("input", () => {
+    // 입력이 바뀌면 이전 선택은 무효 (정확히 다시 선택해야 함)
+    if (selPartnerId && getPartner(selPartnerId) && getPartner(selPartnerId).name !== searchInput().value) {
+      selPartnerId = "";
+      refreshSettle(false);
+    }
+    renderPartnerList(searchInput().value);
+  });
+  searchInput().addEventListener("focus", () => renderPartnerList(searchInput().value));
+  searchInput().addEventListener("blur", () => setTimeout(() => { if (listEl()) listEl().style.display = "none"; }, 150));
+
+  // 발행일 변경 → 전잔금·입금 다시 계산
+  overlay.querySelector("#dcf-date").addEventListener("change", () => refreshSettle(true));
+
+  // 정산 값 직접 수정 → 합계·잔액만 재계산
+  if (isStmt) {
+    overlay.querySelector("#dcf-prev").addEventListener("input", () => refreshSettle(false));
+    overlay.querySelector("#dcf-paid").addEventListener("input", () => refreshSettle(false));
+  }
 
   overlay.addEventListener("click", (e) => {
     const act = e.target.getAttribute && e.target.getAttribute("data-act");
     if (e.target === overlay || act === "cancel") { overlay.remove(); return; }
     if (act === "save") {
-      const partnerId = overlay.querySelector("#dcf-partner").value;
-      if (!partnerId) { toast("거래처를 선택하세요.", "error"); return; }
+      const partnerId = selPartnerId;
+      if (!partnerId || !getPartner(partnerId)) { toast("거래처를 검색해 목록에서 선택하세요.", "error"); return; }
       const cleanLines = lines
         .map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
         .filter((l) => l.name && l.qty > 0);
@@ -256,17 +371,12 @@ function documentForm(type, docId, saleId) {
         saleId: sale ? sale.id : (doc ? doc.saleId : "")
       };
 
-      // 거래명세서: 전잔금/입금/총미수잔액을 발행 시점 값으로 고정 저장 (SPEC 12.4)
+      // 거래명세서: 정산 미리보기에 표시된(수정 가능) 값을 발행 시점 값으로 고정 저장 (SPEC 12.4)
       if (isStmt) {
-        const prevBalance = partnerBalanceBefore(partnerId, date, "sales");
-        // 당일 입금액: 해당 거래처의 발행일 당일 수금 합계
-        let dayPaid = 0;
-        state.sales.forEach((s) => {
-          if (s.partnerId !== partnerId) return;
-          (s.payments || []).forEach((p) => { if (p.date === date) dayPaid += Number(p.amount) || 0; });
-        });
+        const prevBalance = parseMoney(overlay.querySelector("#dcf-prev").value);
+        const dayPaid = parseMoney(overlay.querySelector("#dcf-paid").value);
         data.settle = {
-          prevBalance,                        // 전잔금
+          prevBalance,                        // 전잔금 (자동 계산 후 수동 수정 가능)
           dayTotal,                           // 계 (당일 품목 합계, 공제 반영)
           sum: prevBalance + dayTotal,        // 합계
           paid: dayPaid,                      // 입금
@@ -289,6 +399,9 @@ function documentForm(type, docId, saleId) {
     }
   });
   document.body.appendChild(overlay);
+
+  // 매출 건에서 발행하거나 수정으로 열었을 때: 거래처가 이미 선택되어 있으므로 전잔금 즉시 표시
+  if (isStmt && selPartnerId) refreshSettle(true);
 }
 
 /* ---------- 인쇄 ---------- */
