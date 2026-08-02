@@ -24,11 +24,25 @@ function createWindow() {
   win.setMenuBarVisibility(false); // 기본 메뉴 숨김 (단순한 UI)
   win.loadFile(path.join(__dirname, "app.html"));
 
-  // 외부 링크(택배 조회 등)는 기본 브라우저로
+  // 외부 링크(택배 조회 등)는 기본 브라우저로,
+  // 앱 내부 새 창([🗗 새 창] 보조 창)은 preload를 물려줘서 파일 API 사용 가능하게
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http")) { shell.openExternal(url); return { action: "deny" }; }
-    return { action: "allow" };
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: 1150, height: 820,
+        icon: path.join(__dirname, "icon.ico"),
+        webPreferences: {
+          preload: path.join(__dirname, "preload.js"),
+          contextIsolation: true,
+          nodeIntegration: false
+        }
+      }
+    };
   });
+  // 보조 창도 메뉴 바 숨김
+  win.webContents.on("did-create-window", (child) => child.setMenuBarVisibility(false));
 }
 
 app.whenReady().then(createWindow);

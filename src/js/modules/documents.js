@@ -60,11 +60,24 @@ function renderDocuments(el) {
   }));
 }
 
-/** 문서 품목 합계 */
+/**
+ * 명세서 금액 계산 — 공급가액/공제/세액/합계
+ * showVat=true(세액 별도 표시)면 줄별 세액(줄 공급가액×10% 반올림)의 합을 쓴다.
+ * 줄별 반올림 합 방식이라 표에 보이는 세액 열의 합과 계가 항상 일치한다.
+ */
+function stmtAmounts(lines, discountRate, showVat) {
+  const supply = sum(lines || [], (l) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
+  const discount = discountRate ? Math.round(supply * discountRate / 100) : 0;
+  const vat = showVat
+    ? sum(lines || [], (l) => Math.round((Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * 0.1)) -
+      (discount ? Math.round(discount * 0.1) : 0)
+    : 0;
+  return { supply, discount, vat, total: supply - discount + vat };
+}
+
+/** 문서 품목 합계 (목록 표시용) */
 function docTotal(d) {
-  const supply = sum(d.lines || [], (l) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
-  const discount = d.discountRate ? Math.round(supply * d.discountRate / 100) : 0;
-  return supply - discount;
+  return stmtAmounts(d.lines, d.discountRate, d.showVat).total;
 }
 
 /** 문서번호 채번: Q-YYYYMMDD-01 / S-YYYYMMDD-01 */
@@ -118,6 +131,7 @@ function documentForm(type, docId, saleId) {
       })
     : [{ name: "", spec: "", qty: 1, unitPrice: 0, note: "" }];
   let discountRate = doc ? (doc.discountRate || 0) : 0;
+  let showVat = doc ? !!doc.showVat : false; // 세액(부가세) 별도 표시 ON/OFF (명세서 전용)
 
   const initPartnerId = doc ? doc.partnerId : (sale ? sale.partnerId : "");
   const initDate = doc ? doc.date : today();
@@ -140,13 +154,14 @@ function documentForm(type, docId, saleId) {
   }
 
   function totalsHTML() {
-    const supply = sum(lines, (l) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
-    const discount = discountRate ? Math.round(supply * discountRate / 100) : 0;
-    let html = "계 <b>" + fmtMoney(supply) + "</b>원";
-    if (discountRate) html += " · 공제(" + discountRate + "%) −" + fmtMoney(discount) + "원 · 합계 <b>" + fmtMoney(supply - discount) + "</b>원";
+    const a = stmtAmounts(lines, discountRate, isStmt && showVat);
+    let html = "공급가액 계 <b>" + fmtMoney(a.supply) + "</b>원";
+    if (discountRate) html += " · 공제(" + discountRate + "%) −" + fmtMoney(a.discount) + "원";
+    if (isStmt && showVat) html += " · 세액 <b>" + fmtMoney(a.vat) + "</b>원";
+    if (discountRate || (isStmt && showVat)) html += " · 합계 <b>" + fmtMoney(a.total) + "</b>원";
     if (!isStmt) {
-      const vat = calcVat(supply - discount);
-      html += ' <span class="sub">(견적서에는 부가세 별도 표기: 공급가액 ' + fmtMoney(supply - discount) + " + 부가세 " + fmtMoney(vat) + " = " + fmtMoney(supply - discount + vat) + "원)</span>";
+      const vat = calcVat(a.supply - a.discount);
+      html += ' <span class="sub">(견적서에는 부가세 별도 표기: 공급가액 ' + fmtMoney(a.supply - a.discount) + " + 부가세 " + fmtMoney(vat) + " = " + fmtMoney(a.supply - a.discount + vat) + "원)</span>";
     }
     return html;
   }
@@ -192,7 +207,8 @@ function documentForm(type, docId, saleId) {
       "</div></div></div>" +
       '<div style="margin-top:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
       '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-two" checked style="width:auto"> 2부 인쇄 (공급자+공급받는자)</label>' +
-      '<span class="sub">위 정산 값은 발행 시점 값으로 문서에 고정 저장됩니다.</span></div>'
+      '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-vat"' + (showVat ? " checked" : "") + ' style="width:auto"> 세액(부가세) 별도 표시</label>' +
+      '<span class="sub">세액 켬 = 공급가액·세액 열 분리 / 끔 = 단가에 포함(기존 양식) · 정산 값은 발행 시점에 고정 저장</span></div>'
       : "") +
 
     '<div class="form-field" style="margin-top:12px"><label>메모</label>' +
@@ -268,9 +284,8 @@ function documentForm(type, docId, saleId) {
       });
       overlay.querySelector("#dcf-paid").value = fmtMoney(dayPaid);
     }
-    // 당일 계(공제 반영) + 입력값으로 합계·총미수잔액 재계산
-    const supply = sum(lines, (l) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
-    const dayTotal = supply - (discountRate ? Math.round(supply * discountRate / 100) : 0);
+    // 당일 계(공제·세액 반영) + 입력값으로 합계·총미수잔액 재계산
+    const dayTotal = stmtAmounts(lines, discountRate, showVat).total;
     const prev = parseMoney(overlay.querySelector("#dcf-prev").value);
     const paid = parseMoney(overlay.querySelector("#dcf-paid").value);
     overlay.querySelector("#dcf-sum").value = fmtMoney(prev + dayTotal);
@@ -345,6 +360,12 @@ function documentForm(type, docId, saleId) {
   if (isStmt) {
     overlay.querySelector("#dcf-prev").addEventListener("input", () => refreshSettle(false));
     overlay.querySelector("#dcf-paid").addEventListener("input", () => refreshSettle(false));
+    // 세액 표시 ON/OFF → 합계·정산 다시 계산
+    overlay.querySelector("#dcf-vat").addEventListener("change", (e) => {
+      showVat = e.target.checked;
+      overlay.querySelector("#dcf-totals").innerHTML = totalsHTML();
+      refreshSettle(false);
+    });
   }
 
   overlay.addEventListener("click", (e) => {
@@ -359,13 +380,12 @@ function documentForm(type, docId, saleId) {
       if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요.", "error"); return; }
 
       const date = overlay.querySelector("#dcf-date").value || today();
-      const supply = sum(cleanLines, (l) => l.qty * l.unitPrice);
-      const discount = discountRate ? Math.round(supply * discountRate / 100) : 0;
-      const dayTotal = supply - discount;
+      const dayTotal = stmtAmounts(cleanLines, discountRate, isStmt && showVat).total;
 
       const data = {
         type, date, partnerId, lines: cleanLines,
         discountRate: discountRate || 0,
+        showVat: isStmt ? showVat : false,
         memo: overlay.querySelector("#dcf-memo").value.trim(),
         twoCopies: isStmt ? overlay.querySelector("#dcf-two").checked : false,
         saleId: sale ? sale.id : (doc ? doc.saleId : "")
@@ -567,21 +587,24 @@ function statementPrintHTML(d) {
   return '<div class="doc-stmt">' + style + pageHTML + "</div>";
 }
 
-/** 거래명세서 1부 (SPEC 12.2~12.4) */
+/** 거래명세서 1부 (SPEC 12.2~12.4 + 세액 별도 표시 옵션) */
 function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
   const co = state.company;
   const p = getPartner(d.partnerId) || { name: "(삭제된 거래처)" };
-  const supply = sum(d.lines, (l) => l.qty * l.unitPrice); // 전체 계 (모든 행 — SUM 누락 오류 원천 차단)
-  const discount = d.discountRate ? Math.round(supply * d.discountRate / 100) : 0;
-  const st = d.settle || { prevBalance: 0, dayTotal: supply - discount, sum: supply - discount, paid: 0, balance: supply - discount };
+  const showVat = !!d.showVat; // 세액 별도 표시 여부 (마지막 열: 세액 ↔ 기타)
+  const a = stmtAmounts(d.lines, d.discountRate, showVat); // 전체 계 (모든 행 — SUM 누락 오류 원천 차단)
+  const supply = a.supply, discount = a.discount;
+  const st = d.settle || { prevBalance: 0, dayTotal: a.total, sum: a.total, paid: 0, balance: a.total };
 
   // 품목 행 + 빈 행 채우기 (12행 고정)
   let rows = "";
   pageLines.forEach((l) => {
+    const lineSupply = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
     rows += "<tr><td>" + esc(l.name) + "</td><td>" + esc(l.spec || "") + "</td>" +
       '<td class="stmt-num">' + fmtMoney(l.qty) + "</td>" +
       '<td class="stmt-num">' + fmtMoney(l.unitPrice) + "</td>" +
-      '<td class="stmt-num">' + fmtMoney(l.qty * l.unitPrice) + "</td><td></td></tr>";
+      '<td class="stmt-num">' + fmtMoney(lineSupply) + "</td>" +
+      "<td" + (showVat ? ' class="stmt-num">' + fmtMoney(Math.round(lineSupply * 0.1)) : ">") + "</td></tr>";
   });
   for (let i = pageLines.length; i < 12; i++) rows += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>";
 
@@ -609,14 +632,16 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
     '<table style="margin-bottom:2mm"><tr><th style="width:20%">합계금액</th>' +
     '<td style="font-size:12px"><b>' + fmtMoney(st.dayTotal) + " 원정</b></td></tr></table>" +
 
-    // 품목 표: 품명|규격|수량|단가|공급가액|기타
-    "<table><colgroup><col style='width:30%'><col style='width:15%'><col style='width:10%'><col style='width:15%'><col style='width:18%'><col style='width:12%'></colgroup>" +
-    "<thead><tr><th>품 명</th><th>규 격</th><th>수 량</th><th>단 가</th><th>공급가액</th><th>기 타</th></tr></thead>" +
+    // 품목 표: 품명|규격|수량|단가|공급가액|기타(세액 표시 켜면 마지막 열이 세액)
+    "<table><colgroup><col style='width:28%'><col style='width:14%'><col style='width:10%'><col style='width:14%'><col style='width:18%'><col style='width:16%'></colgroup>" +
+    "<thead><tr><th>품 명</th><th>규 격</th><th>수 량</th><th>단 가</th><th>공급가액</th><th>" + (showVat ? "세 액" : "기 타") + "</th></tr></thead>" +
     "<tbody>" + rows +
     (isLast ?
       "<tr><th>계</th><td></td><td class='stmt-num'>" + fmtMoney(sum(d.lines, (l) => l.qty)) + "</td><td></td>" +
-      "<td class='stmt-num'><b>" + fmtMoney(supply) + "</b></td><td></td></tr>" +
-      (discount ? "<tr><th>공제(" + d.discountRate + "%)</th><td></td><td></td><td></td><td class='stmt-num'>−" + fmtMoney(discount) + "</td><td></td></tr>" : "")
+      "<td class='stmt-num'><b>" + fmtMoney(supply) + "</b></td>" +
+      "<td class='stmt-num'>" + (showVat ? "<b>" + fmtMoney(a.vat + (discount ? Math.round(discount * 0.1) : 0)) + "</b>" : "") + "</td></tr>" +
+      (discount ? "<tr><th>공제(" + d.discountRate + "%)</th><td></td><td></td><td></td><td class='stmt-num'>−" + fmtMoney(discount) + "</td>" +
+        "<td class='stmt-num'>" + (showVat ? "−" + fmtMoney(Math.round(discount * 0.1)) : "") + "</td></tr>" : "")
       : "") +
     "</tbody></table>" +
 

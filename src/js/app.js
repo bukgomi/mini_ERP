@@ -4,6 +4,42 @@
 
 let currentView = "dashboard"; // 현재 보고 있는 모듈 ID
 
+/* ---------- 보조 창(팝업) 모드 ----------
+ * [🗗 새 창] 버튼으로 열린 창은 ?popup=1 로 실행된다.
+ * 두 창이 동시에 저장하면 서로 덮어쓰므로, 보조 창은 읽기 전용 조회 창으로 열고
+ * 기본 창이 저장한 내용을 몇 초 간격으로 자동 반영한다.
+ * ---------------------------------------- */
+const _urlParams = new URLSearchParams(location.search);
+const popupMode = _urlParams.get("popup") === "1";
+const popupInitialView = _urlParams.get("view") || "dashboard";
+
+/** 현재 화면을 새 창으로 열기 */
+function openPopupWindow(viewId) {
+  const url = new URL(location.href);
+  url.searchParams.set("popup", "1");
+  url.searchParams.set("view", viewId || currentView);
+  window.open(url.toString(), "_blank", "width=1150,height=820");
+}
+
+/** 보조 창: 파일이 바뀌었으면 다시 읽어 화면 갱신 */
+async function refreshPopupData(manual) {
+  if (!storage.isConnected()) return;
+  const text = await storage.readFile(DATA_FILE);
+  if (!text) return;
+  try {
+    const parsed = JSON.parse(text);
+    if (manual || parsed.lastSaved !== state.lastSaved) {
+      const keepView = currentView;
+      state = migrateState(parsed);
+      currentView = keepView;
+      renderApp();
+      if (manual) toast("최신 데이터로 새로고침했습니다.", "success");
+    }
+  } catch (e) {
+    if (manual) toast("데이터 파일을 읽을 수 없습니다.", "error");
+  }
+}
+
 /* ---------- 화면 테마 (PC별 설정 — localStorage에 저장, 데이터 파일과 무관) ---------- */
 
 /** 저장된 테마·강조색을 html 태그에 적용 */
@@ -82,6 +118,15 @@ function renderTopbar() {
 
   const roBadge = document.getElementById("readonly-badge");
   if (roBadge) roBadge.style.display = readOnlyMode ? "" : "none";
+  if (roBadge && popupMode && !archiveViewYear) roBadge.textContent = "🗗 보조 창 · 읽기 전용";
+
+  // 보조 창: [새 창] 버튼 숨김 + 저장 상태 대신 "조회 전용" 표시
+  const popBtn = document.getElementById("btn-popout");
+  if (popBtn) popBtn.style.display = popupMode ? "none" : "";
+  if (popupMode) {
+    const ss = document.getElementById("save-status");
+    if (ss) { ss.textContent = "조회 전용"; ss.className = "save-status"; }
+  }
 }
 
 /** 상단 배너 — 폴더 미연결/권한 만료/폴백 모드 안내 */
@@ -90,6 +135,13 @@ function renderBanner() {
   banner.innerHTML = "";
   banner.style.display = "none";
 
+  if (popupMode) {
+    banner.style.display = "flex";
+    banner.className = "banner info";
+    banner.innerHTML = "<span>🗗 보조 창(읽기 전용)입니다. 입력·수정은 기본 창에서 하세요 — 기본 창에서 저장하면 몇 초 안에 여기에도 반영됩니다.</span>" +
+      '<button class="btn btn-sm" onclick="refreshPopupData(true)">지금 새로고침</button>';
+    return;
+  }
   if (readOnlyMode) {
     banner.style.display = "flex";
     banner.className = "banner info";
@@ -173,11 +225,11 @@ async function enterArchiveView(year) {
   }
 }
 
-/** 아카이브 조회 종료 → 현재 장부 복귀 */
+/** 아카이브 조회 종료 → 현재 장부 복귀 (보조 창은 계속 읽기 전용) */
 function exitArchiveView() {
   if (liveStateBackup) state = liveStateBackup;
   liveStateBackup = null;
-  readOnlyMode = false;
+  readOnlyMode = popupMode; // 보조 창이면 읽기 전용 유지
   archiveViewYear = null;
   renderApp();
 }
@@ -199,6 +251,16 @@ async function initApp() {
   document.getElementById("menu-toggle").addEventListener("click", () => {
     document.getElementById("sidebar").classList.toggle("open");
   });
+  // [🗗 새 창] — 현재 화면을 보조 창(읽기 전용)으로 열기
+  document.getElementById("btn-popout").addEventListener("click", () => openPopupWindow(currentView));
+
+  // 보조 창 모드: 읽기 전용 + 시작 화면 지정 + 5초마다 자동 새로고침
+  if (popupMode) {
+    readOnlyMode = true;
+    currentView = MODULES[popupInitialView] ? popupInitialView : "dashboard";
+    document.title = "미니 ERP — 보조 창 (읽기 전용)";
+    setInterval(() => refreshPopupData(false), 5000);
+  }
 
   // ---- 종료 시 저장 보장 ----
   // 1) 탭이 가려지는 순간(다른 창 전환, 최소화, 닫기 직전) 대기 중인 저장을 즉시 실행.
