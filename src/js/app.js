@@ -81,21 +81,29 @@ function renderApp() {
   document.getElementById("sidebar").classList.remove("open");
 }
 
-/** 사이드바 렌더 — 업무 그룹별로 묶어서, 켜진 모듈만 표시 */
+/** 사이드바 렌더 — 업무 그룹별로 묶되, 사용자 지정 순서(설정 ↑↓)를 따른다
+ *  그룹 자체의 위치도 그 그룹에서 가장 위에 있는 항목의 순서를 따라 움직인다 */
 function renderSidebar() {
   const nav = document.getElementById("nav-menu");
-  nav.innerHTML = MODULE_GROUPS.map(([groupName, ids]) => {
-    const items = ids.filter((id) => MODULES[id] && isModuleOn(id));
-    if (!items.length) return ""; // 그룹의 모듈이 전부 꺼져 있으면 그룹째 숨김
-    return '<div class="nav-group">' +
-      '<div class="nav-group-title">' + esc(groupName) + "</div>" +
-      items.map((id) => {
-        const m = MODULES[id];
-        return '<button class="nav-item' + (id === currentView ? " active" : "") + '" data-view="' + id + '">' +
-          '<span class="nav-icon">' + m.icon + "</span><span>" + esc(m.name) + "</span></button>";
-      }).join("") +
-      "</div>";
-  }).join("");
+  const order = orderedModuleIds();
+  const idx = (id) => order.indexOf(id);
+
+  const groups = MODULE_GROUPS.map(([groupName, ids]) => {
+    const items = ids.filter((id) => MODULES[id] && isModuleOn(id)).sort((a, b) => idx(a) - idx(b));
+    return { groupName, items, key: items.length ? Math.min(...items.map(idx)) : Infinity };
+  })
+    .filter((g) => g.items.length) // 그룹의 모듈이 전부 꺼져 있으면 그룹째 숨김
+    .sort((a, b) => a.key - b.key);
+
+  nav.innerHTML = groups.map((g) =>
+    '<div class="nav-group">' +
+    '<div class="nav-group-title">' + esc(g.groupName) + "</div>" +
+    g.items.map((id) => {
+      const m = MODULES[id];
+      return '<button class="nav-item' + (id === currentView ? " active" : "") + '" data-view="' + id + '">' +
+        '<span class="nav-icon">' + m.icon + "</span><span>" + esc(m.name) + "</span></button>";
+    }).join("") +
+    "</div>").join("");
 
   renderTopbar();
 }

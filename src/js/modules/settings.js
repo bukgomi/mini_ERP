@@ -36,8 +36,9 @@ function renderSettings(el) {
       '" data-accent-pick="' + v + '" style="background:' + c + '" title="' + t + '"></span>').join("") +
     "</div></div></div></div>" +
 
-    // ---- 모듈 토글 ----
-    '<div class="card"><h3>모듈 켜기/끄기 <span class="sub">모듈을 꺼도 데이터는 삭제되지 않습니다. 다시 켜면 그대로 보입니다.</span></h3>' +
+    // ---- 모듈 토글 + 순서 변경 ----
+    '<div class="card"><h3>모듈 켜기/끄기 · 순서 변경 <span class="sub">↑↓로 메뉴 순서를 바꿀 수 있습니다. 모듈을 꺼도 데이터는 삭제되지 않습니다.</span>' +
+    '<button class="btn btn-sm" id="btn-reset-order" style="float:right">기본 순서로</button></h3>' +
     '<div id="module-toggles">' + moduleTogglesHTML() + "</div></div>" +
 
     // ---- 데이터 폴더 ----
@@ -97,6 +98,19 @@ function renderSettings(el) {
       if (guardReadOnly()) { chk.checked = !chk.checked; return; }
       toggleModule(chk.getAttribute("data-module"), chk.checked);
     });
+  });
+
+  // 모듈 순서 이동 (↑↓) + 기본 순서 복원
+  el.querySelectorAll("[data-move-up]").forEach((b) => b.addEventListener("click", () => moveModule(b.getAttribute("data-move-up"), -1)));
+  el.querySelectorAll("[data-move-down]").forEach((b) => b.addEventListener("click", () => moveModule(b.getAttribute("data-move-down"), 1)));
+  el.querySelector("#btn-reset-order").addEventListener("click", async () => {
+    if (guardReadOnly()) return;
+    const ok = await confirmDialog("메뉴 순서를 기본값으로 되돌릴까요?");
+    if (!ok) return;
+    state.moduleOrder = [];
+    markDirty();
+    renderApp();
+    toast("기본 순서로 되돌렸습니다.", "success");
   });
 
   // JSON 가져오기
@@ -241,16 +255,28 @@ function field(label, id, value, placeholder) {
     '<input type="text" id="' + id + '" value="' + esc(value || "") + '" placeholder="' + esc(placeholder || "") + '"></div>';
 }
 
-/** 모듈 토글 목록 HTML — 레지스트리에서 자동 생성 */
+/** 모듈 토글 목록 HTML — 사용자 지정 순서대로, ↑↓ 이동 버튼 포함 */
 function moduleTogglesHTML() {
-  return Object.keys(MODULES).map((id) => {
+  const order = orderedModuleIds();
+  // 모듈이 속한 그룹 이름 (행에 작게 표시)
+  const groupOf = {};
+  MODULE_GROUPS.forEach(([name, ids]) => ids.forEach((id) => { groupOf[id] = name; }));
+
+  return order.map((id, i) => {
     const m = MODULES[id];
+    if (!m) return "";
     const on = isModuleOn(id);
     const dep = canEnableModule(id);
     const disabled = m.locked || (!on && !dep.ok);
     return '<div class="module-row">' +
+      // 순서 이동 버튼
+      '<span style="display:flex;flex-direction:column;gap:2px">' +
+      '<button class="btn btn-sm" data-move-up="' + id + '" title="위로"' + (i === 0 ? " disabled" : "") + ' style="height:20px;padding:0 6px;font-size:10px">▲</button>' +
+      '<button class="btn btn-sm" data-move-down="' + id + '" title="아래로"' + (i === order.length - 1 ? " disabled" : "") + ' style="height:20px;padding:0 6px;font-size:10px">▼</button>' +
+      "</span>" +
       '<span class="nav-icon">' + m.icon + "</span>" +
-      '<div class="mod-info"><div class="mod-name">' + esc(m.name) + "</div>" +
+      '<div class="mod-info"><div class="mod-name">' + esc(m.name) +
+      ' <span class="sub" style="font-weight:400">' + esc(groupOf[id] || "") + "</span></div>" +
       '<div class="mod-desc">' + esc(m.desc) +
       (!on && !dep.ok ? ' — <span style="color:var(--danger)">' + esc(dep.reason) + "</span>" : "") +
       "</div></div>" +

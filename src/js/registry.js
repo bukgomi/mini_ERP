@@ -89,6 +89,29 @@ const MODULES = {
   }
 };
 
+/**
+ * 사용자 지정 메뉴 순서 — 저장된 순서 + 누락된 모듈(업데이트로 추가된 것)은 기본 위치에 덧붙임
+ * 빈 배열이면 레지스트리 기본 순서 그대로
+ */
+function orderedModuleIds() {
+  const all = Object.keys(MODULES);
+  const saved = Array.isArray(state.moduleOrder) ? state.moduleOrder.filter((id) => all.includes(id)) : [];
+  return saved.concat(all.filter((id) => !saved.includes(id)));
+}
+
+/** 설정 화면 ↑↓ 버튼: 모듈 순서 한 칸 이동 (dir = -1 위로 / +1 아래로) */
+function moveModule(id, dir) {
+  if (guardReadOnly()) return;
+  const order = orderedModuleIds();
+  const i = order.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  state.moduleOrder = order;
+  markDirty();
+  renderApp();
+}
+
 /** 모듈이 현재 켜져 있는지 (locked 모듈은 항상 true) */
 function isModuleOn(id) {
   const m = MODULES[id];

@@ -33,7 +33,8 @@ function defaultState() {
     expenseCategories: ["식대", "교통", "소모품", "임차료", "기타"], // 경비 분류 (설정에서 추가 가능)
     fiscalYear: new Date().getFullYear(),
     seq: { quote: 1, statement: 1 },
-    closedYears: []    // 마감된 연도 목록 [{ year, closedAt, archiveFile }]
+    closedYears: [],   // 마감된 연도 목록 [{ year, closedAt, archiveFile }]
+    moduleOrder: []    // 메뉴 순서 (빈 배열 = 기본 순서). 설정에서 ↑↓로 변경
   };
 }
 
