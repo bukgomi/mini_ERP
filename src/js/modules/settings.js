@@ -292,10 +292,10 @@ function exportAllCSV() {
   toast("CSV 파일 5개를 내려받았습니다.", "success");
 }
 
-/** 품목 줄 요약 문자열 (첫 품목 외 N건) */
+/** 품목 줄 요약 문자열 (첫 품목 외 N건) — 품명 안 줄바꿈은 공백으로 바꿔 목록이 깨지지 않게 */
 function lineSummary(lines) {
   if (!lines || !lines.length) return "";
-  const first = lines[0].name || "";
+  const first = (lines[0].name || "").replace(/\n/g, " ");
   return lines.length > 1 ? first + " 외 " + (lines.length - 1) + "건" : first;
 }
 

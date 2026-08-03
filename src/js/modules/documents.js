@@ -129,7 +129,8 @@ function documentForm(type, docId, saleId) {
         const item = l.itemId ? getItem(l.itemId) : null;
         return { name: l.name, spec: item ? item.spec : "", qty: l.qty, unitPrice: l.unitPrice, note: "" };
       })
-    : [{ name: "", spec: "", qty: 1, unitPrice: 0, note: "" }];
+    // 새 문서는 기본 5줄로 시작 (한 줄씩 추가하는 불편 제거 — 빈 줄은 저장 시 자동 제외)
+    : Array.from({ length: 5 }, () => ({ name: "", spec: "", qty: 1, unitPrice: 0, note: "" }));
   let discountRate = doc ? (doc.discountRate || 0) : 0;
   let showVat = doc ? !!doc.showVat : false; // 세액(부가세) 별도 표시 ON/OFF (명세서 전용)
 
@@ -144,8 +145,10 @@ function documentForm(type, docId, saleId) {
   overlay.className = "modal-overlay";
 
   function linesHTML() {
+    // 품명은 textarea — Alt+Enter(또는 Shift+Enter)로 칸 안에서 줄바꿈 가능 (엑셀과 동일)
     return lines.map((ln, i) =>
-      '<tr><td><input type="text" data-df="name" data-i="' + i + '" value="' + esc(ln.name) + '" placeholder="품명" list="doc-item-list"></td>' +
+      '<tr><td><textarea data-df="name" data-i="' + i + '" rows="1" placeholder="품명" ' +
+      'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.name) + "</textarea></td>" +
       '<td style="width:110px"><input type="text" data-df="spec" data-i="' + i + '" value="' + esc(ln.spec || "") + '"></td>' +
       '<td style="width:80px"><input type="text" class="num" data-df="qty" data-i="' + i + '" value="' + fmtMoney(ln.qty) + '"></td>' +
       '<td style="width:110px"><input type="text" class="num" data-df="unitPrice" data-i="' + i + '" value="' + fmtMoney(ln.unitPrice) + '"></td>' +
@@ -188,7 +191,8 @@ function documentForm(type, docId, saleId) {
     "<th>품명</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">공급가액</th><th></th></tr></thead>" +
     '<tbody id="dcf-lines">' + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="dcf-addline" style="margin-top:8px">+ 품목 줄 추가</button>' +
-    '<p class="sub" style="margin-top:6px">💡 품명에 등록된 품목 이름을 입력하면 단가가 자동 입력됩니다.' +
+    '<p class="sub" style="margin-top:6px">💡 <b>Enter</b> = 다음 줄 (마지막 줄이면 자동 추가) · <b>Alt+Enter</b> = 품명 칸 안에서 줄바꿈 · ' +
+    "품명에 등록된 품목 이름을 입력하면 단가가 자동 입력됩니다." +
     (isStmt ? " 12줄이 넘으면 인쇄 시 자동으로 다음 장으로 넘어갑니다." : "") + "</p></div>" +
 
     '<div id="dcf-totals" style="margin-top:10px">' + totalsHTML() + "</div>" +
@@ -303,7 +307,33 @@ function documentForm(type, docId, saleId) {
   }
   function bindLineEvents() {
     overlay.querySelectorAll("[data-df]").forEach((inp) => {
+      // Enter 키 동작: 다음 줄 이동(마지막 줄이면 자동 추가) / Alt·Shift+Enter: 품명 안 줄바꿈
+      inp.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        if (inp.tagName === "TEXTAREA" && (e.altKey || e.shiftKey)) {
+          e.preventDefault(); // Alt+Enter는 기본으로 안 들어가므로 직접 삽입
+          const pos = inp.selectionStart;
+          inp.value = inp.value.slice(0, pos) + "\n" + inp.value.slice(inp.selectionEnd);
+          inp.selectionStart = inp.selectionEnd = pos + 1;
+          lines[Number(inp.getAttribute("data-i"))].name = inp.value;
+          inp.style.height = "auto"; inp.style.height = inp.scrollHeight + "px";
+          return;
+        }
+        e.preventDefault();
+        const i = Number(inp.getAttribute("data-i"));
+        if (i >= lines.length - 1) {
+          lines.push({ name: "", spec: "", qty: 1, unitPrice: 0, note: "" });
+          refreshLines();
+          const areas = overlay.querySelectorAll('[data-df="name"]');
+          if (areas.length) areas[areas.length - 1].focus();
+        } else {
+          const next = overlay.querySelector('[data-df="name"][data-i="' + (i + 1) + '"]');
+          if (next) next.focus();
+        }
+      });
       inp.addEventListener("input", () => {
+        // 품명 textarea는 내용에 맞춰 높이 자동 조절
+        if (inp.tagName === "TEXTAREA") { inp.style.height = "auto"; inp.style.height = inp.scrollHeight + "px"; }
         const i = Number(inp.getAttribute("data-i"));
         const f = inp.getAttribute("data-df");
         if (f === "qty" || f === "unitPrice") lines[i][f] = parseMoney(inp.value);
@@ -603,12 +633,13 @@ function statementPrintHTML(d) {
     ".doc-stmt{font-family:'Malgun Gothic',sans-serif;color:#000}" +
     ".stmt-page{display:flex;gap:6mm;page-break-after:always;width:100%}" +
     ".stmt-page:last-child{page-break-after:auto}" +
-    ".stmt-copy{flex:1;border:1.5px solid #000;padding:3mm;font-size:10px}" +
+    // 글자 크기: 실물 인쇄 양식 수준으로 크게 (사용자 피드백)
+    ".stmt-copy{flex:1;border:1.5px solid #000;padding:3mm;font-size:12.5px}" +
     ".stmt-copy table{width:100%;border-collapse:collapse;table-layout:fixed}" +
-    ".stmt-copy th,.stmt-copy td{border:1px solid #000;padding:2px 4px;font-size:10px;overflow:hidden}" +
-    ".stmt-copy th{background:#efefef;text-align:center;font-weight:600}" +
-    ".stmt-title{text-align:center;font-size:16px;font-weight:700;letter-spacing:6px;margin:2px 0}" +
-    ".stmt-sub{text-align:center;font-size:11px;letter-spacing:4px;margin-bottom:4px}" +
+    ".stmt-copy th,.stmt-copy td{border:1px solid #000;padding:3px 5px;font-size:12px;overflow:hidden;line-height:1.45}" +
+    ".stmt-copy th{background:#efefef;text-align:center;font-weight:700}" +
+    ".stmt-title{text-align:center;font-size:21px;font-weight:700;letter-spacing:8px;margin:2px 0}" +
+    ".stmt-sub{text-align:center;font-size:13px;letter-spacing:5px;margin-bottom:5px}" +
     ".stmt-num{text-align:right;font-variant-numeric:tabular-nums}" +
     "</style>";
 
@@ -632,10 +663,11 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
   const st = d.settle || { prevBalance: 0, dayTotal: a.total, sum: a.total, paid: 0, balance: a.total };
 
   // 품목 행 + 빈 행 채우기 (12행 고정)
+  // 품명 안의 줄바꿈(Alt+Enter로 입력)은 <br>로 그대로 인쇄한다
   let rows = "";
   pageLines.forEach((l) => {
     const lineSupply = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
-    rows += "<tr><td>" + esc(l.name) + "</td><td>" + esc(l.spec || "") + "</td>" +
+    rows += "<tr><td>" + esc(l.name).replace(/\n/g, "<br>") + "</td><td>" + esc(l.spec || "").replace(/\n/g, "<br>") + "</td>" +
       '<td class="stmt-num">' + fmtMoney(l.qty) + "</td>" +
       '<td class="stmt-num">' + fmtMoney(l.unitPrice) + "</td>" +
       '<td class="stmt-num">' + fmtMoney(lineSupply) + "</td>" +
@@ -649,14 +681,14 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
   return '<div class="stmt-copy">' +
     '<div class="stmt-title">거 래 명 세 서</div>' +
     '<div class="stmt-sub">( ' + copyTitle + " )</div>" +
-    (pageCount > 1 ? '<div style="text-align:right;font-size:9px">' + (pageIdx + 1) + " / " + pageCount + " 장</div>" : "") +
+    (pageCount > 1 ? '<div style="text-align:right;font-size:11px">' + (pageIdx + 1) + " / " + pageCount + " 장</div>" : "") +
 
     // 상단: 작성일자 + 공급받는자 / 공급자 박스
     '<table style="margin-bottom:2mm"><colgroup><col style="width:38%"><col style="width:12%"><col style="width:50%"></colgroup>' +
     "<tr><td rowspan='4' style='border:none;vertical-align:top'>" +
-    "<div style='font-size:9px'>작성일자: " + esc(d.date) + "</div>" +
-    "<div style='font-size:15px;font-weight:700;margin-top:5mm'>" + esc(p.name) + " 귀하</div>" +
-    "<div style='font-size:9px;margin-top:4mm'>아래와 같이 공급합니다.</div></td>" +
+    "<div style='font-size:11.5px'>작성일자: " + esc(d.date) + "</div>" +
+    "<div style='font-size:18px;font-weight:700;margin-top:5mm'>" + esc(p.name) + " 귀하</div>" +
+    "<div style='font-size:11.5px;margin-top:4mm'>아래와 같이 공급합니다.</div></td>" +
     "<th>상 호</th><td>" + esc(co.name) + " <span style='float:right'>성명: " + esc(co.ceo) + "</span></td></tr>" +
     "<tr><th>사업자<br>번호</th><td>" + esc(co.bizNumber) + "</td></tr>" +
     "<tr><th>계 좌</th><td>" + esc(co.bankAccount) + "</td></tr>" +
@@ -665,7 +697,7 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
 
     // 합계(상단): 금액 + 원정 표기
     '<table style="margin-bottom:2mm"><tr><th style="width:20%">합계금액</th>' +
-    '<td style="font-size:12px"><b>' + fmtMoney(st.dayTotal) + " 원정</b></td></tr></table>" +
+    '<td style="font-size:15px"><b>' + fmtMoney(st.dayTotal) + " 원정</b></td></tr></table>" +
 
     // 품목 표: 품명|규격|수량|단가|공급가액|기타(세액 표시 켜면 마지막 열이 세액)
     "<table><colgroup><col style='width:28%'><col style='width:14%'><col style='width:10%'><col style='width:14%'><col style='width:18%'><col style='width:16%'></colgroup>" +
