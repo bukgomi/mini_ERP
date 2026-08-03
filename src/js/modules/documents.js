@@ -145,10 +145,12 @@ function documentForm(type, docId, saleId) {
   overlay.className = "modal-overlay";
 
   function linesHTML() {
-    // 품명·규격은 textarea — Alt+Enter(또는 Shift+Enter)로 칸 안에서 줄바꿈 가능 (엑셀과 동일)
+    // 품명 = 검색 드롭다운 (입력하면 등록 품목 목록이 떠서 클릭 선택, 자유 입력도 가능)
+    // 규격 = textarea, Alt+Enter(또는 Shift+Enter)로 칸 안 줄바꿈
     return lines.map((ln, i) =>
-      '<tr><td><textarea data-df="name" data-i="' + i + '" rows="1" placeholder="품명" ' +
-      'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.name) + "</textarea></td>" +
+      '<tr><td style="position:relative">' +
+      '<input type="text" data-df="name" data-i="' + i + '" value="' + esc(ln.name) + '" placeholder="품명" autocomplete="off">' +
+      '<div class="combo-list" data-item-combo="' + i + '" style="display:none"></div></td>' +
       '<td style="width:110px"><textarea data-df="spec" data-i="' + i + '" rows="1" ' +
       'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.spec || "") + "</textarea></td>" +
       '<td style="width:80px"><input type="text" class="num" data-df="qty" data-i="' + i + '" value="' + fmtMoney(ln.qty) + '"></td>' +
@@ -174,9 +176,6 @@ function documentForm(type, docId, saleId) {
     '<div class="modal-box wide"><h3 style="margin-bottom:14px">' +
     (isStmt ? "거래명세서" : "견적서") + (doc ? " 수정/재발행" : " 작성") + "</h3>" +
 
-    // 품명 자동완성용 datalist (품목 등록된 경우)
-    "<datalist id=\"doc-item-list\">" +
-    state.items.map((it) => '<option value="' + esc(it.name) + '">').join("") + "</datalist>" +
 
     '<div class="form-grid" style="grid-template-columns:repeat(3,1fr)">' +
     '<div class="form-field"><label>발행일</label><input type="date" id="dcf-date" value="' + esc(initDate) + '"></div>' +
@@ -192,9 +191,9 @@ function documentForm(type, docId, saleId) {
     "<th>품명</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">공급가액</th><th></th></tr></thead>" +
     '<tbody id="dcf-lines">' + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="dcf-addline" style="margin-top:8px">+ 품목 줄 추가</button>' +
-    '<p class="sub" style="margin-top:6px">💡 <b>Enter</b> = 다음 줄 (마지막 줄이면 자동 추가) · <b>Alt+Enter</b> = 품명·규격 칸 안에서 줄바꿈 · ' +
-    "품명에 등록된 품목 이름을 입력하면 단가가 자동 입력됩니다." +
-    (isStmt ? " 12줄이 넘으면 인쇄 시 자동으로 다음 장으로 넘어갑니다." : "") + "</p></div>" +
+    '<p class="sub" style="margin-top:6px">💡 품명 칸에 입력하면 등록 품목이 검색됩니다 (선택 시 규격·단가 자동) · ' +
+    "<b>Enter</b> = 다음 줄 (마지막 줄이면 자동 추가) · <b>Alt+Enter</b> = 규격 칸 안 줄바꿈" +
+    (isStmt ? " · 12줄이 넘으면 인쇄 시 자동으로 다음 장으로 넘어갑니다." : "") + "</p></div>" +
 
     '<div id="dcf-totals" style="margin-top:10px">' + totalsHTML() + "</div>" +
 
@@ -307,6 +306,42 @@ function documentForm(type, docId, saleId) {
     refreshSettle(false); // 품목이 바뀌면 당일 계도 바뀜
   }
   function bindLineEvents() {
+    // ---- 품명 검색 드롭다운: 입력할 때마다 등록 품목을 검색해 목록 표시, 클릭으로 선택 ----
+    overlay.querySelectorAll('[data-df="name"]').forEach((inp) => {
+      const i = Number(inp.getAttribute("data-i"));
+      const list = overlay.querySelector('[data-item-combo="' + i + '"]');
+      if (!list) return;
+      const renderItemList = (q) => {
+        q = (q || "").trim().toLowerCase();
+        const matches = state.items
+          .filter((it) => !q || (it.name || "").toLowerCase().includes(q) || (it.code || "").toLowerCase().includes(q))
+          .slice(0, 30);
+        if (!matches.length) { list.style.display = "none"; return; }
+        list.innerHTML = matches.map((it) =>
+          '<div class="combo-item" data-ipick="' + it.id + '"><span><b>' + esc(it.name) + "</b>" +
+          (it.spec ? ' <span class="ci-sub">' + esc(it.spec) + "</span>" : "") + "</span>" +
+          '<span class="ci-sub">' + fmtMoney(it.salePrice) + "원</span></div>").join("");
+        list.style.display = "block";
+        // mousedown: blur보다 먼저 처리되어 클릭이 씹히지 않음
+        list.querySelectorAll("[data-ipick]").forEach((item) => {
+          item.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            const it = getItem(item.getAttribute("data-ipick"));
+            if (!it) return;
+            lines[i].name = it.name;
+            if (!lines[i].spec) lines[i].spec = it.spec || "";
+            lines[i].unitPrice = Number(it.salePrice) || 0; // 품목 선택 = 단가 자동 (VLOOKUP 동작)
+            refreshLines();
+            const qtyInp = overlay.querySelector('[data-df="qty"][data-i="' + i + '"]');
+            if (qtyInp) { qtyInp.focus(); qtyInp.select(); }
+          });
+        });
+      };
+      inp.addEventListener("focus", () => renderItemList(inp.value));
+      inp.addEventListener("input", () => renderItemList(inp.value));
+      inp.addEventListener("blur", () => setTimeout(() => { if (list) list.style.display = "none"; }, 150));
+    });
+
     overlay.querySelectorAll("[data-df]").forEach((inp) => {
       // Enter 키 동작: 다음 줄 이동(마지막 줄이면 자동 추가) / Alt·Shift+Enter: 품명 안 줄바꿈
       inp.addEventListener("keydown", (e) => {
