@@ -336,13 +336,16 @@ function tradeForm(kind, id) {
 function downloadTradeTemplate(kind) {
   const cfg = TRADE_CFG[kind];
   const isSales = kind === "sales";
-  const header = ["날짜", "거래처", "품명", "규격", "수량", "단가", "부가세미적용",
-    "상태", cfg.payLabel + "액", cfg.payLabel + "일", "메모"];
+  // 세무·회계 프로그램 내보내기와 호환되는 양식.
+  // 공급가액·부가가치세·합계금액을 비우면 수량×단가로 자동 계산된다.
+  // 예전 양식(품명/부가세미적용/상태/수금액/수금일/메모)도 계속 인식된다.
+  const header = ["날짜", "거래처명", "품목 / 적요", "수량", "단가",
+    "공급가액", "부가가치세", "합계금액", "결제수단", "과세유형", "증빙유형", "비고"];
   const example = isSales
-    ? ["2026-07-01", "예시상사", "A형 부품", "10x20mm", 10, 15000, "", "완료", 100000, "2026-07-15", "예시 줄 — 지우고 실제 데이터를 입력하세요"]
-    : ["2026-07-01", "예시자재", "B형 부품", "20x30mm", 20, 9000, "", "입고완료", 0, "", "예시 줄 — 지우고 실제 데이터를 입력하세요"];
+    ? ["2026-07-01", "예시상사", "A형 부품", 10, 15000, 150000, 15000, 165000, "현금", "과세", "세금계산서", "예시 줄 — 지우고 실제 데이터를 입력하세요"]
+    : ["2026-07-01", "예시자재", "B형 부품", 20, 9000, 180000, 18000, 198000, "외상", "과세", "세금계산서", "예시 줄 — 지우고 실제 데이터를 입력하세요"];
   downloadXlsx(cfg.label + "_업로드양식.xlsx", [header, example], cfg.label);
-  toast("양식을 내려받았습니다. 부가세미적용 열은 해당 시 Y를 입력하세요.", "success");
+  toast("양식을 내려받았습니다. 공급가액·부가가치세·합계금액은 비우면 수량×단가로 자동 계산됩니다.", "success");
 }
 
 /** 현재 필터 기간의 매출/매입 목록 엑셀 다운로드 (한 행 = 품목 1줄) */
@@ -389,21 +392,34 @@ async function importTradesFile(kind, file) {
   if (!rows.length) { toast("파일에 데이터가 없습니다.", "error"); return; }
 
   const COLS = [
-    ["날짜", "date", ["거래일", "일자"]],
-    ["거래처", "partner", ["상호", "거래처명"]],
-    ["품명", "name", ["품목", "품목명", "내용"]],
+    ["날짜", "date", ["거래일", "일자", "작성일자"]],
+    ["거래처명", "partner", ["거래처", "상호"]],
+    ["품목 / 적요", "name", ["품목/적요", "적요", "품목", "품명", "품목명", "내용"]],
     ["규격", "spec", []],
     ["수량", "qty", []],
     ["단가", "unitPrice", ["단 가"]],
-    ["부가세미적용", "vatExempt", ["부가세없음", "면세"]],
+    // 금액 열 (있으면 파일 값을 그대로 사용, 없으면 수량×단가로 계산)
+    ["공급가액", "supplyAmt", ["공급 가액", "공급가"]],
+    ["부가가치세", "vatAmt", ["부가세", "세액", "부 가 세"]],
+    ["합계금액", "totalAmt", ["합계", "합 계", "총액", "총금액"]],
+    // 부가 정보 열
+    ["결제수단", "payMethod", ["결제방법", "결제구분", "거래유형"]],
+    ["과세유형", "taxType", ["과세구분", "과세종류"]],
+    ["증빙유형", "evidence", ["증빙", "증빙구분", "증빙종류"]],
+    // 예전 양식 호환
+    ["부가세미적용", "vatExempt", ["부가세없음", "면세여부"]],
     ["상태", "status", []],
     [cfg.payLabel + "액", "paid", [cfg.payLabel + "금액", "입금액", "지급액", "수금액"]],
     [cfg.payLabel + "일", "paidDate", ["입금일", "지급일", "수금일"]],
-    ["메모", "memo", ["비고"]]
+    ["비고", "memo", ["메모"]]
   ];
-  const mapped = mapSpreadsheetHeader(rows, COLS, "거래처") || mapSpreadsheetHeader(rows, COLS, "날짜");
+  let mapped = null;
+  for (const anchor of ["거래처명", "거래처", "날짜"]) {
+    mapped = mapSpreadsheetHeader(rows, COLS, anchor);
+    if (mapped) break;
+  }
   if (!mapped || mapped.colMap.date === undefined || mapped.colMap.partner === undefined || mapped.colMap.name === undefined) {
-    toast('헤더 행을 찾을 수 없습니다. "날짜·거래처·품명" 열은 필수입니다. [엑셀 양식 받기]를 참고하세요.', "error");
+    toast('헤더 행을 찾을 수 없습니다. "날짜·거래처명·품목" 열은 필수입니다. [엑셀 양식 받기]를 참고하세요.', "error");
     return;
   }
   const { headerIdx, colMap } = mapped;
@@ -427,14 +443,39 @@ async function importTradesFile(kind, file) {
     if (!iname) { errors.push(rowNo + "행: 품명이 비어 있어 건너뜁니다."); return; }
 
     const qty = getNum("qty") || 1;
-    const unitPrice = getNum("unitPrice");
-    const vatExempt = /^(y|yes|예|o|1|true)$/i.test(get("vatExempt"));
+    let unitPrice = getNum("unitPrice");
     let status = get("status");
     if (!cfg.statuses.includes(status)) status = cfg.statuses[cfg.statuses.length - 1]; // 기본: 완료/입고완료
 
-    const supply = Math.round(qty * unitPrice);
-    const vat = vatExempt ? 0 : calcVat(supply);
-    const total = supply + vat;
+    // ---- 금액 계산: 파일 값 우선, 없으면 자동 계산 ----
+    // 면세 판정: 과세유형(면세/영세/불공제) 또는 예전 양식의 부가세미적용 Y
+    const taxType = get("taxType");
+    const taxFree = /면세|영세|불공제/.test(taxType) || /^(y|yes|예|o|1|true)$/i.test(get("vatExempt"));
+
+    let supply = colMap.supplyAmt !== undefined ? getNum("supplyAmt") : 0;
+    // 부가세: "빈칸"은 자동 계산 대상(null), "0"이 적혀 있으면 파일 값(0) 그대로
+    const rawVat = colMap.vatAmt !== undefined ? String(r[colMap.vatAmt] ?? "").trim() : "";
+    let vat = rawVat === "" ? null : parseMoney(rawVat);
+    let total = colMap.totalAmt !== undefined ? getNum("totalAmt") : 0;
+
+    if (!supply) {
+      if (unitPrice) supply = Math.round(qty * unitPrice);              // 수량×단가
+      else if (total) supply = taxFree ? total                          // 합계만 있는 파일: 역산
+        : (vat != null && vat > 0 ? total - vat : supplyFromTotal(total));
+    }
+    if (vat == null) vat = taxFree ? 0 : calcVat(supply);               // 부가세 열이 없으면 자동
+    if (!total) total = supply + vat;
+    if (!unitPrice && qty) unitPrice = Math.round(supply / qty);        // 표시용 단가 역산
+    if (total !== supply + vat) {
+      errors.push(rowNo + "행 경고: 합계금액(" + fmtMoney(total) + ")이 공급가액+부가세(" + fmtMoney(supply + vat) + ")와 다릅니다. 파일 값 그대로 등록합니다.");
+    }
+
+    // ---- 결제수단: 현금/카드/이체 등은 "전액 수금 처리" 옵션 대상, 외상/미수는 제외 ----
+    const payMethodRaw = get("payMethod");
+    const isCredit = !payMethodRaw || /외상|미수|신용|후불|미지급/.test(payMethodRaw);
+    const method = /카드/.test(payMethodRaw) ? "카드"
+      : /이체|계좌|입금|무통장|송금/.test(payMethodRaw) ? "계좌이체"
+      : /현금/.test(payMethodRaw) ? "현금" : "기타";
 
     // 거래처 매칭 (정확히 같은 상호)
     const partner = state.partners.find((p) => p.name === pname);
@@ -447,17 +488,22 @@ async function importTradesFile(kind, file) {
     const dupSuspect = state[cfg.listKey].some((t) =>
       t.date === date && partnerName(t.partnerId) === pname && (Number(t.total) || 0) === total);
 
-    const paid = getNum("paid");
+    const paid = getNum("paid"); // 예전 양식의 수금액 열
     const paidDate = normalizeDateCell(colMap.paidDate === undefined ? "" : r[colMap.paidDate]) || date;
+
+    // 메모: 비고 + 증빙유형 보존
+    const evidence = get("evidence");
+    const memo = [get("memo"), evidence ? "[증빙: " + evidence + "]" : ""].filter(Boolean).join(" ");
 
     parsed.push({
       rowNo, partnerName: pname, partnerExists: !!partner, itemLinked: !!item, dupSuspect,
+      payMethodRaw, isCredit, method,
       data: {
         date,
-        lines: [{ itemId: item ? item.id : "", name: iname, qty, unitPrice }],
-        supply, vat, total, vatIncluded: !vatExempt, status,
+        lines: [{ itemId: item ? item.id : "", name: iname, qty, unitPrice, spec: get("spec") || undefined }],
+        supply, vat, total, vatIncluded: !taxFree, status,
         payments: paid > 0 ? [{ date: paidDate, amount: paid, method: "기타", memo: "엑셀 업로드" }] : [],
-        memo: get("memo")
+        memo
       }
     });
   });
@@ -469,6 +515,8 @@ async function importTradesFile(kind, file) {
 
   const dupCount = parsed.filter((x) => x.dupSuspect).length;
   const linkedCount = parsed.filter((x) => x.itemLinked).length;
+  // 결제수단이 현금성(외상 아님)이고 수금액 열로 이미 수금이 안 잡힌 행 = 전액 수금 처리 대상
+  const payableCount = parsed.filter((x) => !x.isCredit && !x.data.payments.length).length;
   const stockAffecting = parsed.filter((x) => x.itemLinked &&
     (isSales ? ["출고완료", "완료"].includes(x.data.status) : x.data.status === "입고완료")).length;
 
@@ -495,18 +543,23 @@ async function importTradesFile(kind, file) {
     (dupCount ?
       '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="imp-skip-dup" checked style="width:auto"> ' +
       "중복 의심 건 건너뛰기</label>" : "") +
+    (payableCount ?
+      '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="imp-full-paid" checked style="width:auto"> ' +
+      "결제수단이 현금·카드·이체인 " + payableCount + "건은 전액 " + cfg.payLabel + " 처리 (외상·미수는 제외)</label>" : "") +
     "</div>" +
 
     '<div class="table-wrap" style="max-height:300px;overflow-y:auto"><table class="grid">' +
-    '<thead><tr><th>행</th><th>날짜</th><th>거래처</th><th>품명</th><th class="num">수량</th><th class="num">단가</th>' +
-    '<th class="num">합계</th><th class="num">' + cfg.payLabel + '액</th><th>상태</th><th>판정</th></tr></thead><tbody>' +
+    '<thead><tr><th>행</th><th>날짜</th><th>거래처</th><th>품목/적요</th><th class="num">수량</th><th class="num">공급가액</th>' +
+    '<th class="num">부가세</th><th class="num">합계</th><th>결제</th><th>상태</th><th>판정</th></tr></thead><tbody>' +
     parsed.map((x) =>
       "<tr><td>" + x.rowNo + "</td><td>" + esc(x.data.date) + "</td>" +
       "<td>" + esc(x.partnerName) + (x.partnerExists ? "" : ' <span class="badge blue">신규</span>') + "</td>" +
       "<td>" + esc(x.data.lines[0].name) + (x.itemLinked ? ' <span class="badge green">품목연결</span>' : "") + "</td>" +
-      '<td class="num">' + fmtMoney(x.data.lines[0].qty) + '</td><td class="num">' + fmtMoney(x.data.lines[0].unitPrice) + "</td>" +
-      '<td class="num">' + fmtMoney(x.data.total) + "</td>" +
-      '<td class="num">' + fmtMoney(sum(x.data.payments, (p) => p.amount)) + "</td>" +
+      '<td class="num">' + fmtMoney(x.data.lines[0].qty) + "</td>" +
+      '<td class="num">' + fmtMoney(x.data.supply) + "</td>" +
+      '<td class="num">' + fmtMoney(x.data.vat) + "</td>" +
+      '<td class="num"><b>' + fmtMoney(x.data.total) + "</b></td>" +
+      "<td>" + (x.payMethodRaw ? esc(x.payMethodRaw) : (sum(x.data.payments, (p) => p.amount) ? fmtMoney(sum(x.data.payments, (p) => p.amount)) : "")) + "</td>" +
       "<td>" + esc(x.data.status) + "</td>" +
       "<td>" + (x.dupSuspect ? '<span class="badge orange">중복 의심</span>' : '<span class="badge green">신규</span>') + "</td></tr>").join("") +
     "</tbody></table></div>" +
@@ -523,7 +576,8 @@ async function importTradesFile(kind, file) {
     if (act === "import") {
       const autoPartner = newPartnerNames.size ? overlay.querySelector("#imp-auto-partner").checked : false;
       const skipDup = dupCount ? overlay.querySelector("#imp-skip-dup").checked : false;
-      let added = 0, skippedDup = 0, skippedNoPartner = 0, createdPartners = 0;
+      const fullPaid = payableCount ? overlay.querySelector("#imp-full-paid").checked : false;
+      let added = 0, skippedDup = 0, skippedNoPartner = 0, createdPartners = 0, paidRows = 0;
       const createdMap = {}; // 이름 → 새 거래처 (같은 이름 여러 행이 하나의 거래처를 공유)
 
       parsed.forEach((x) => {
@@ -532,10 +586,15 @@ async function importTradesFile(kind, file) {
         if (!partner) {
           if (!autoPartner) { skippedNoPartner++; return; }
           partner = { id: uid("p"), name: x.partnerName, type: isSales ? "매출처" : "매입처",
-            bizNumber: "", ceo: "", phone: "", email: "", address: "", openingBalance: 0, memo: "엑셀 업로드로 자동 등록" };
+            bizNumber: "", ceo: "", phone: "", email: "", address: "", openingBalance: 0, openingPayments: [], memo: "엑셀 업로드로 자동 등록" };
           state.partners.push(partner);
           createdMap[x.partnerName] = partner;
           createdPartners++;
+        }
+        // 결제수단 기반 전액 수금/지급 처리 (현금·카드·이체, 외상 제외)
+        if (fullPaid && !x.isCredit && !x.data.payments.length && x.data.total > 0) {
+          x.data.payments = [{ date: x.data.date, amount: x.data.total, method: x.method, memo: "엑셀 업로드 (결제수단: " + x.payMethodRaw + ")" }];
+          paidRows++;
         }
         state[cfg.listKey].push(Object.assign({ id: uid("s"), partnerId: partner.id }, x.data));
         added++;
@@ -546,6 +605,7 @@ async function importTradesFile(kind, file) {
       renderApp();
       toast(cfg.label + " 업로드 완료: " + added + "건 등록" +
         (createdPartners ? ", 거래처 " + createdPartners + "곳 자동 등록" : "") +
+        (paidRows ? ", " + paidRows + "건 전액 " + cfg.payLabel + " 처리" : "") +
         (skippedDup ? ", 중복 의심 " + skippedDup + "건 건너뜀" : "") +
         (skippedNoPartner ? ", 거래처 없음 " + skippedNoPartner + "건 건너뜀" : ""), "success");
     }
