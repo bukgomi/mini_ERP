@@ -145,11 +145,12 @@ function documentForm(type, docId, saleId) {
   overlay.className = "modal-overlay";
 
   function linesHTML() {
-    // 품명은 textarea — Alt+Enter(또는 Shift+Enter)로 칸 안에서 줄바꿈 가능 (엑셀과 동일)
+    // 품명·규격은 textarea — Alt+Enter(또는 Shift+Enter)로 칸 안에서 줄바꿈 가능 (엑셀과 동일)
     return lines.map((ln, i) =>
       '<tr><td><textarea data-df="name" data-i="' + i + '" rows="1" placeholder="품명" ' +
       'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.name) + "</textarea></td>" +
-      '<td style="width:110px"><input type="text" data-df="spec" data-i="' + i + '" value="' + esc(ln.spec || "") + '"></td>' +
+      '<td style="width:110px"><textarea data-df="spec" data-i="' + i + '" rows="1" ' +
+      'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.spec || "") + "</textarea></td>" +
       '<td style="width:80px"><input type="text" class="num" data-df="qty" data-i="' + i + '" value="' + fmtMoney(ln.qty) + '"></td>' +
       '<td style="width:110px"><input type="text" class="num" data-df="unitPrice" data-i="' + i + '" value="' + fmtMoney(ln.unitPrice) + '"></td>' +
       '<td class="num" style="width:110px" data-damount="' + i + '">' + fmtMoney((ln.qty || 0) * (ln.unitPrice || 0)) + "</td>" +
@@ -191,7 +192,7 @@ function documentForm(type, docId, saleId) {
     "<th>품명</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">공급가액</th><th></th></tr></thead>" +
     '<tbody id="dcf-lines">' + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="dcf-addline" style="margin-top:8px">+ 품목 줄 추가</button>' +
-    '<p class="sub" style="margin-top:6px">💡 <b>Enter</b> = 다음 줄 (마지막 줄이면 자동 추가) · <b>Alt+Enter</b> = 품명 칸 안에서 줄바꿈 · ' +
+    '<p class="sub" style="margin-top:6px">💡 <b>Enter</b> = 다음 줄 (마지막 줄이면 자동 추가) · <b>Alt+Enter</b> = 품명·규격 칸 안에서 줄바꿈 · ' +
     "품명에 등록된 품목 이름을 입력하면 단가가 자동 입력됩니다." +
     (isStmt ? " 12줄이 넘으면 인쇄 시 자동으로 다음 장으로 넘어갑니다." : "") + "</p></div>" +
 
@@ -315,7 +316,8 @@ function documentForm(type, docId, saleId) {
           const pos = inp.selectionStart;
           inp.value = inp.value.slice(0, pos) + "\n" + inp.value.slice(inp.selectionEnd);
           inp.selectionStart = inp.selectionEnd = pos + 1;
-          lines[Number(inp.getAttribute("data-i"))].name = inp.value;
+          // 품명·규격 중 어느 칸이든 해당 필드에 반영
+          lines[Number(inp.getAttribute("data-i"))][inp.getAttribute("data-df")] = inp.value;
           inp.style.height = "auto"; inp.style.height = inp.scrollHeight + "px";
           return;
         }
@@ -568,7 +570,7 @@ function quotePrintHTML(d) {
   const grand = net + vat;
 
   const rows = d.lines.map((l, i) =>
-    "<tr><td style='text-align:center'>" + (i + 1) + "</td><td>" + esc(l.name) + "</td><td>" + esc(l.spec || "") + "</td>" +
+    "<tr><td style='text-align:center'>" + (i + 1) + "</td><td>" + esc(l.name).replace(/\n/g, "<br>") + "</td><td>" + esc(l.spec || "").replace(/\n/g, "<br>") + "</td>" +
     "<td style='text-align:center'>" + fmtMoney(l.qty) + "</td>" +
     "<td style='text-align:right'>" + fmtMoney(l.unitPrice) + "</td>" +
     "<td style='text-align:right'>" + fmtMoney(l.qty * l.unitPrice) + "</td></tr>").join("");
