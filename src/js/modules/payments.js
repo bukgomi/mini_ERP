@@ -582,7 +582,7 @@ function renderPartnerLedger(el) {
   const isRecv = payLedgerKind === "sales";
   el.innerHTML =
     '<div class="filter-bar">' +
-    '<select id="lg-partner"><option value="">거래처 선택</option>' +
+    '<select id="lg-partner"><option value="">(전체 거래처 요약)</option>' +
     state.partners.map((p) => '<option value="' + p.id + '"' + (payLedgerPartnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
     "</select>" +
     '<select id="lg-kind">' +
@@ -601,8 +601,64 @@ function renderPartnerLedger(el) {
   el.querySelector("#lg-to").addEventListener("change", (e) => { payLedgerTo = e.target.value; renderApp(); });
 
   const tableEl = el.querySelector("#lg-table");
+
+  // ---- 거래처 미선택: 전체 거래처 원장 요약 (전잔금 → 기간 거래 → 기간 입금 → 기말 잔액) ----
   if (!payLedgerPartnerId) {
-    tableEl.innerHTML = '<div class="card"><p class="empty-msg">거래처를 선택하면 원장이 표시됩니다.</p></div>';
+    const listAll = payLedgerKind === "purchases" ? state.purchases : state.sales;
+    const wantKind = payLedgerKind === "purchases" ? "지급" : "수금";
+    const summary = state.partners.map((p) => {
+      const prev = partnerBalanceBefore(p.id, payLedgerFrom, payLedgerKind);
+      let debit = 0, credit = 0;
+      listAll.forEach((r) => {
+        if (r.partnerId !== p.id) return;
+        if (inRange(r.date, payLedgerFrom, payLedgerTo)) debit += Number(r.total) || 0;
+        (r.payments || []).forEach((pm) => { if (inRange(pm.date, payLedgerFrom, payLedgerTo)) credit += Number(pm.amount) || 0; });
+      });
+      (p.openingPayments || []).forEach((x) => {
+        if (x.kind === wantKind && inRange(x.date, payLedgerFrom, payLedgerTo)) credit += Number(x.amount) || 0;
+      });
+      return { p, prev, debit, credit, end: prev + debit - credit };
+    })
+      .filter((x) => x.prev !== 0 || x.debit !== 0 || x.credit !== 0) // 움직임 없는 거래처 숨김
+      .sort((a, b) => b.end - a.end);
+
+    const tot = {
+      prev: sum(summary, (x) => x.prev), debit: sum(summary, (x) => x.debit),
+      credit: sum(summary, (x) => x.credit), end: sum(summary, (x) => x.end)
+    };
+    const dLabel = isRecv ? "기간 매출" : "기간 매입";
+    const cLabel = isRecv ? "기간 입금" : "기간 지급";
+
+    tableEl.innerHTML =
+      '<div class="card"><h3>전체 거래처 원장 요약 <span class="sub">(' + (isRecv ? "매출·수금" : "매입·지급") +
+      " · 거래처를 클릭하면 개별 원장으로 이동)</span></h3>" +
+      (summary.length ?
+        '<div class="table-wrap"><table class="grid">' +
+        '<thead><tr><th>거래처</th><th class="num">전잔금</th><th class="num">' + dLabel + '</th><th class="num">' + cLabel + '</th><th class="num">기말 잔액</th></tr></thead><tbody>' +
+        summary.map((x) =>
+          '<tr style="cursor:pointer" data-open-ledger="' + x.p.id + '"><td><b>' + esc(x.p.name) + "</b></td>" +
+          '<td class="num">' + fmtMoney(x.prev) + "</td>" +
+          '<td class="num">' + fmtMoney(x.debit) + "</td>" +
+          '<td class="num">' + fmtMoney(x.credit) + "</td>" +
+          '<td class="num"><b' + (x.end > 0 ? ' style="color:var(--danger)"' : "") + ">" + fmtMoney(x.end) + "</b></td></tr>").join("") +
+        '<tr class="total-row"><td>합계 (' + summary.length + '곳)</td>' +
+        '<td class="num">' + fmtMoney(tot.prev) + '</td><td class="num">' + fmtMoney(tot.debit) + "</td>" +
+        '<td class="num">' + fmtMoney(tot.credit) + '</td><td class="num">' + fmtMoney(tot.end) + "</td></tr>" +
+        "</tbody></table></div>"
+        : '<p class="empty-msg">기간 내 움직임이 있는 거래처가 없습니다.</p>') +
+      "</div>";
+
+    tableEl.querySelectorAll("[data-open-ledger]").forEach((tr) => tr.addEventListener("click", () => {
+      payLedgerPartnerId = tr.getAttribute("data-open-ledger");
+      renderApp();
+    }));
+    el.querySelector("#lg-csv").addEventListener("click", () => {
+      downloadCSV("원장요약_" + (isRecv ? "매출수금" : "매입지급") + "_" + payLedgerFrom + "~" + payLedgerTo + ".csv", [
+        ["거래처", "전잔금", dLabel, cLabel, "기말 잔액"],
+        ...summary.map((x) => [x.p.name, x.prev, x.debit, x.credit, x.end]),
+        ["합계", tot.prev, tot.debit, tot.credit, tot.end]
+      ]);
+    });
     return;
   }
   const debitLabel = isRecv ? "매출(차변)" : "매입(차변)";
