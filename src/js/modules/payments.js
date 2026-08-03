@@ -333,13 +333,17 @@ function applyBulkPayment(kind, partnerId, amount, date, method, memo) {
   return true;
 }
 
-/** 업로드용 엑셀 양식 */
+/** 업로드용 엑셀 양식 — 통장 기록 형식(입금액/입금계좌) 그대로. 수금액 등 옛 용어도 인식된다 */
 function downloadPaymentTemplate(kind) {
   const cfg = TRADE_CFG[kind];
-  downloadXlsx(cfg.payLabel + "_업로드양식.xlsx", [
-    ["날짜", "거래처명", "금액", "결제수단", "메모"],
-    ["2026-07-15", "예시상사", 500000, "계좌이체", "7월분 정산 — 예시 줄은 지우고 입력하세요"]
-  ], cfg.payLabel);
+  const isRecv = kind === "sales";
+  const header = isRecv
+    ? ["날짜", "거래처명", "적요", "입금액", "입금계좌/수단", "비고"]
+    : ["날짜", "거래처명", "적요", "지급액", "지급계좌/수단", "비고"];
+  const example = isRecv
+    ? ["2026-01-30", "예시상사", "입금-1월분 정산", 2881500, "계좌이체(기업-425)", "1/28 계산서발급 — 예시 줄은 지우고 입력하세요"]
+    : ["2026-01-30", "예시자재", "지급-1월분 자재대", 1500000, "계좌이체(기업-425)", "예시 줄은 지우고 입력하세요"];
+  downloadXlsx(cfg.payLabel + "_업로드양식.xlsx", [header, example], cfg.payLabel);
   toast("양식을 내려받았습니다. 각 행의 금액이 그 거래처의 오래된 미결제 건부터 자동 배분됩니다.", "success");
 }
 
@@ -363,7 +367,7 @@ function exportPaymentsXlsx(kind) {
   });
   rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
   downloadXlsx(cfg.payLabel + "내역_" + today() + ".xlsx", [
-    ["날짜", "거래처명", "구분", "대상 거래", "금액", "결제수단", "메모"], ...rows
+    ["날짜", "거래처명", "구분", "대상 거래", isRecv ? "입금액" : "지급액", isRecv ? "입금수단" : "지급수단", "비고"], ...rows
   ], cfg.payLabel);
   toast(cfg.payLabel + " 기록 " + rows.length + "건을 엑셀로 내려받았습니다.", "success");
 }
@@ -377,15 +381,17 @@ async function importPaymentsFile(kind, file) {
     rows = await parseSpreadsheetFile(file);
   } catch (err) { toast(err.message, "error"); return; }
 
+  // 입금액(통장 관점)·수금액(관리 관점) 등 용어가 회사마다 달라 전부 별칭으로 인식한다
   const COLS = [
-    ["날짜", "date", ["수금일", "지급일", "입금일", "거래일", "일자"]],
+    ["날짜", "date", ["수금일", "지급일", "입금일", "출금일", "거래일", "일자"]],
     ["거래처명", "partner", ["거래처", "상호"]],
-    ["금액", "amount", ["수금액", "지급액", "입금액", "금 액"]],
-    ["결제수단", "method", ["방법", "결제방법", "결제구분"]],
-    ["메모", "memo", ["비고", "적요"]]
+    ["적요", "desc", ["내용", "품목 / 적요", "품목/적요"]],
+    ["입금액", "amount", ["수금액", "지급액", "출금액", "금액", "금 액", "입 금 액"]],
+    ["입금계좌/수단", "method", ["입금계좌", "입금수단", "수금수단", "지급수단", "지급계좌/수단", "출금계좌", "결제수단", "결제방법", "결제구분", "방법", "계좌"]],
+    ["비고", "memo", ["메모"]]
   ];
   let mapped = null;
-  for (const anchor of ["거래처명", "거래처", "금액"]) {
+  for (const anchor of ["거래처명", "거래처", "입금액", "수금액", "금액"]) {
     mapped = mapSpreadsheetHeader(rows, COLS, anchor);
     if (mapped) break;
   }
@@ -419,7 +425,12 @@ async function importPaymentsFile(kind, file) {
 
     const mRaw = get("method");
     const method = /카드/.test(mRaw) ? "카드" : /이체|계좌|입금|무통장|송금/.test(mRaw) ? "계좌이체" : /현금/.test(mRaw) ? "현금" : "기타";
-    if (ok) parsed.push({ rowNo, partnerId: partner.id, pname, date, amount, method, memo: get("memo") || "엑셀 일괄 " + cfg.payLabel });
+    // 메모: 적요 + 계좌 상세(예: 계좌이체(기업-425)) + 비고를 모두 보존
+    const memoParts = [get("desc")];
+    if (mRaw && mRaw !== method) memoParts.push(mRaw); // 정규화로 잃는 계좌 정보 보존
+    memoParts.push(get("memo"));
+    const memo = memoParts.filter(Boolean).join(" / ") || "엑셀 일괄 " + cfg.payLabel;
+    if (ok) parsed.push({ rowNo, partnerId: partner.id, pname, date, amount, method, memo });
   });
 
   if (!parsed.length) {
