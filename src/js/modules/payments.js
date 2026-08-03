@@ -42,16 +42,15 @@ function renderUnpaidOverview(el, kind) {
     .sort((a, b) => b.bal - a.bal);
   const totalBal = sum(partnerRows, (x) => x.bal);
 
-  // 연령 분석 (건별 미수금 기준, 기초 이월은 "90일 이상"에 포함)
+  // 연령 분석 (건별 미수금 기준, 기초 이월 "잔여분"은 90일 이상에 포함)
   const aging = [0, 0, 0, 0];
   list.forEach((r) => {
     const un = unpaidAmount(r);
     if (un > 0) aging[agingBucket(r.date)] += un;
   });
   state.partners.forEach((p) => {
-    const ob = Number(p.openingBalance) || 0;
-    const val = isRecv ? (ob > 0 ? ob : 0) : (ob < 0 ? -ob : 0);
-    if (val) aging[3] += val;
+    const val = openingRemaining(p, kind);
+    if (val > 0) aging[3] += val;
   });
 
   // 미결제 건 목록
@@ -66,17 +65,18 @@ function renderUnpaidOverview(el, kind) {
     tile("90일 이상", fmtMoney(aging[3]) + "원", "red") +
     "</div>" +
 
-    '<div class="card"><h3>거래처별 ' + cfg.unpaidLabel + " 잔액 <span class=\"sub\">(기초 이월 포함)</span></h3>" +
+    '<div style="margin-bottom:14px"><button class="btn btn-primary" id="btn-bulk-pay">💰 일괄 ' + cfg.payLabel + " 입력 (거래처 단위 자동 배분)</button></div>" +
+
+    '<div class="card"><h3>거래처별 ' + cfg.unpaidLabel + " 잔액 <span class=\"sub\">(이월 잔여분 포함)</span></h3>" +
     (partnerRows.length ?
-      '<div class="table-wrap"><table class="grid"><thead><tr><th>거래처</th><th class="num">기초 이월</th><th class="num">' +
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>거래처</th><th class="num">이월 잔여</th><th class="num">' +
       cfg.unpaidLabel + ' 잔액</th><th></th></tr></thead><tbody>' +
       partnerRows.map((x) => {
-        const ob = Number(x.p.openingBalance) || 0;
-        const obVal = isRecv ? (ob > 0 ? ob : 0) : (ob < 0 ? -ob : 0);
         return "<tr><td><b>" + esc(x.p.name) + "</b></td>" +
-          '<td class="num">' + fmtMoney(obVal) + "</td>" +
+          '<td class="num">' + fmtMoney(openingRemaining(x.p, kind)) + "</td>" +
           '<td class="num"><b style="color:var(--danger)">' + fmtMoney(x.bal) + "</b></td>" +
-          '<td class="actions"><button class="btn btn-sm" data-ledger="' + x.p.id + '">원장 보기</button></td></tr>';
+          '<td class="actions"><button class="btn btn-sm btn-primary" data-bulk="' + x.p.id + '">일괄 ' + cfg.payLabel + "</button> " +
+          '<button class="btn btn-sm" data-ledger="' + x.p.id + '">원장 보기</button></td></tr>';
       }).join("") + "</tbody></table></div>"
       : '<p class="empty-msg">' + cfg.unpaidLabel + "이 없습니다. 🎉</p>") +
     "</div>" +
@@ -99,11 +99,170 @@ function renderUnpaidOverview(el, kind) {
     "</div>";
 
   el.querySelectorAll("[data-pay]").forEach((b) => b.addEventListener("click", () => paymentForm(kind, b.getAttribute("data-pay"))));
+  el.querySelector("#btn-bulk-pay").addEventListener("click", () => bulkPaymentForm(kind, ""));
+  el.querySelectorAll("[data-bulk]").forEach((b) => b.addEventListener("click", () => bulkPaymentForm(kind, b.getAttribute("data-bulk"))));
   el.querySelectorAll("[data-ledger]").forEach((b) => b.addEventListener("click", () => {
     payLedgerPartnerId = b.getAttribute("data-ledger");
     payTab = "ledger";
     renderApp();
   }));
+}
+
+/* ---------- 일괄 수금/지급 (거래처 단위, FIFO 자동 배분) ----------
+ * 받은 금액을 ① 이월 잔여분 → ② 오래된 미결제 건 순서로 자동 배분한다.
+ * 배분 결과를 미리보기로 확인한 뒤 확정하면:
+ *  - 이월 충당분 → partner.openingPayments 에 기록 (원장·현금출납부 자동 연동)
+ *  - 건별 충당분 → 각 매출/매입 건의 payments 에 쪼개서 기록 (기존 구조 그대로)
+ * ------------------------------------------------------------------ */
+function bulkPaymentForm(kind, presetPartnerId) {
+  if (guardReadOnly()) return;
+  const cfg = TRADE_CFG[kind];
+  const isRecv = kind === "sales";
+  if (!state.partners.length) { toast("먼저 거래처를 등록하세요.", "error"); return; }
+
+  let selPid = presetPartnerId || "";
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML =
+    '<div class="modal-box wide"><h3 style="margin-bottom:6px">💰 일괄 ' + cfg.payLabel + " 입력</h3>" +
+    '<p class="sub" style="margin-bottom:12px">받은 금액을 이월 잔여분 → 오래된 건 순서로 자동 배분합니다. 아래 미리보기를 확인하고 확정하세요.</p>' +
+    '<div class="form-grid" style="grid-template-columns:repeat(4,1fr)">' +
+    '<div class="form-field" style="position:relative;grid-column:span 2"><label>거래처 *</label>' +
+    '<input type="text" id="bp-partner" autocomplete="off" placeholder="상호로 검색" value="' +
+    esc(selPid ? partnerName(selPid) : "") + '">' +
+    '<div id="bp-partner-list" class="combo-list" style="display:none"></div></div>' +
+    '<div class="form-field"><label>날짜</label><input type="date" id="bp-date" value="' + today() + '"></div>' +
+    '<div class="form-field"><label>방법</label><select id="bp-method">' +
+    ["현금", "계좌이체", "카드", "기타"].map((m) => "<option>" + m + "</option>").join("") + "</select></div>" +
+    '<div class="form-field"><label>받은 금액 *</label><input type="text" class="num" id="bp-amount" value="0"></div>' +
+    '<div class="form-field" style="grid-column:span 3"><label>메모</label><input type="text" id="bp-memo" placeholder="예: 7월분 정산"></div>' +
+    "</div>" +
+    '<div id="bp-preview" style="margin-top:14px"><p class="sub">거래처와 금액을 입력하면 배분 미리보기가 표시됩니다.</p></div>' +
+    '<div class="modal-btns" style="margin-top:16px">' +
+    '<button class="btn" data-act="cancel">취소</button>' +
+    '<button class="btn btn-primary" data-act="save" disabled>확정 (배분 기록)</button></div></div>';
+
+  const $ = (sel) => overlay.querySelector(sel);
+  let currentPlan = null; // { openingAlloc, saleAllocs: [{rec, amount}], leftover }
+
+  /** 거래처 검색 콤보 */
+  function renderPartnerList(q) {
+    q = (q || "").trim().toLowerCase();
+    const matches = state.partners
+      .filter((p) => !q || (p.name || "").toLowerCase().includes(q))
+      .filter((p) => partnerBalance(p.id, kind) > 0 || p.id === selPid) // 잔액 있는 곳 위주
+      .slice(0, 30);
+    const list = $("#bp-partner-list");
+    list.innerHTML = matches.length ? matches.map((p) =>
+      '<div class="combo-item" data-pick="' + p.id + '"><span><b>' + esc(p.name) + "</b></span>" +
+      '<span class="ci-sub">' + cfg.unpaidLabel + " " + fmtMoney(partnerBalance(p.id, kind)) + "원</span></div>").join("")
+      : '<div class="combo-empty">' + cfg.unpaidLabel + "이 남은 거래처가 없습니다.</div>";
+    list.style.display = "block";
+    list.querySelectorAll("[data-pick]").forEach((it) => it.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      selPid = it.getAttribute("data-pick");
+      $("#bp-partner").value = partnerName(selPid);
+      list.style.display = "none";
+      // 기본값: 전체 잔액 (한 번에 다 갚는 경우가 흔하므로)
+      $("#bp-amount").value = fmtMoney(partnerBalance(selPid, kind));
+      refreshPreview();
+    }));
+  }
+  $("#bp-partner").addEventListener("focus", () => renderPartnerList($("#bp-partner").value));
+  $("#bp-partner").addEventListener("input", () => {
+    if (selPid && partnerName(selPid) !== $("#bp-partner").value) { selPid = ""; refreshPreview(); }
+    renderPartnerList($("#bp-partner").value);
+  });
+  $("#bp-partner").addEventListener("blur", () => setTimeout(() => { const l = $("#bp-partner-list"); if (l) l.style.display = "none"; }, 150));
+  $("#bp-amount").addEventListener("input", refreshPreview);
+  $("#bp-date").addEventListener("change", refreshPreview);
+
+  /** FIFO 배분 계산 + 미리보기 렌더 */
+  function refreshPreview() {
+    const box = $("#bp-preview");
+    const saveBtn = overlay.querySelector('[data-act="save"]');
+    currentPlan = null;
+    saveBtn.disabled = true;
+    const p = getPartner(selPid);
+    const amount = parseMoney($("#bp-amount").value);
+    if (!p || amount <= 0) {
+      box.innerHTML = '<p class="sub">거래처와 금액을 입력하면 배분 미리보기가 표시됩니다.</p>';
+      return;
+    }
+    const totalBal = partnerBalance(selPid, kind);
+    let remain = amount;
+    const rows = [];
+
+    // ① 이월 잔여분 먼저
+    const openRemain = openingRemaining(p, kind);
+    let openingAlloc = 0;
+    if (openRemain > 0 && remain > 0) {
+      openingAlloc = Math.min(openRemain, remain);
+      remain -= openingAlloc;
+      rows.push(["<b>이월 " + cfg.unpaidLabel + "</b> (프로그램 도입 전)", openRemain, openingAlloc, openRemain - openingAlloc]);
+    }
+    // ② 오래된 미결제 건 순서 (FIFO)
+    const list = (kind === "purchases" ? state.purchases : state.sales)
+      .filter((r) => r.partnerId === selPid && unpaidAmount(r) > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const saleAllocs = [];
+    list.forEach((r) => {
+      if (remain <= 0) return;
+      const un = unpaidAmount(r);
+      const take = Math.min(un, remain);
+      remain -= take;
+      saleAllocs.push({ rec: r, amount: take });
+      rows.push([esc(r.date) + " " + esc(lineSummary(r.lines)), un, take, un - take]);
+    });
+
+    const over = remain > 0; // 총 잔액보다 많이 입력
+    currentPlan = over ? null : { openingAlloc, saleAllocs };
+    saveBtn.disabled = over || (!openingAlloc && !saleAllocs.length);
+
+    box.innerHTML =
+      '<div class="card" style="margin-bottom:0;padding:12px">' +
+      "<b>배분 미리보기</b> — 총 " + cfg.unpaidLabel + " " + fmtMoney(totalBal) + "원 중 " + fmtMoney(amount) + "원 " + cfg.payLabel +
+      '<div class="table-wrap" style="margin-top:8px"><table class="grid">' +
+      '<thead><tr><th>대상</th><th class="num">' + cfg.unpaidLabel + '</th><th class="num">충당액</th><th class="num">남는 잔액</th></tr></thead><tbody>' +
+      rows.map((r) => "<tr><td>" + r[0] + '</td><td class="num">' + fmtMoney(r[1]) + "</td>" +
+        '<td class="num"><b style="color:var(--success)">' + fmtMoney(r[2]) + "</b></td>" +
+        '<td class="num">' + (r[3] > 0 ? '<b style="color:var(--danger)">' + fmtMoney(r[3]) + "</b>" : "0") + "</td></tr>").join("") +
+      "</tbody></table></div>" +
+      (over ? '<p style="color:var(--danger);margin-top:8px">⚠️ 입력 금액이 총 ' + cfg.unpaidLabel + "보다 " + fmtMoney(remain) +
+        "원 많습니다. 금액을 줄여주세요. (선수금은 지원하지 않습니다 — 초과분은 현금출납부에 수동 입금으로 기록하세요)</p>" : "") +
+      "</div>";
+  }
+  if (selPid) { $("#bp-amount").value = fmtMoney(partnerBalance(selPid, kind)); refreshPreview(); }
+
+  overlay.addEventListener("click", (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute("data-act");
+    if (e.target === overlay || act === "cancel") { overlay.remove(); return; }
+    if (act === "save") {
+      if (!currentPlan) return;
+      const p = getPartner(selPid);
+      const date = $("#bp-date").value || today();
+      const method = $("#bp-method").value;
+      const memo = $("#bp-memo").value.trim() || "일괄 " + cfg.payLabel;
+      // 이월 충당 기록
+      if (currentPlan.openingAlloc > 0) {
+        p.openingPayments = p.openingPayments || [];
+        p.openingPayments.push({ date, amount: currentPlan.openingAlloc, method, memo, kind: isRecv ? "수금" : "지급" });
+      }
+      // 건별 충당 기록 (기존 payments 구조 그대로)
+      currentPlan.saleAllocs.forEach((a) => {
+        a.rec.payments = a.rec.payments || [];
+        a.rec.payments.push({ date, amount: a.amount, method, memo });
+      });
+      markDirty();
+      overlay.remove();
+      renderApp();
+      toast("일괄 " + cfg.payLabel + " 완료: " +
+        (currentPlan.openingAlloc ? "이월분 " + fmtMoney(currentPlan.openingAlloc) + "원 + " : "") +
+        currentPlan.saleAllocs.length + "건에 " + fmtMoney(sum(currentPlan.saleAllocs, (a) => a.amount)) + "원 배분", "success");
+    }
+  });
+  document.body.appendChild(overlay);
+  if (!selPid) $("#bp-partner").focus();
 }
 
 /* ---------- 수금/지급 입력 (부분 수금 지원) ---------- */
@@ -270,6 +429,16 @@ function buildLedgerRows(partnerId, from, to, kind) {
 
   // 기간 내 이벤트 수집
   const events = [];
+  // 이월 충당 수금/지급 (일괄 수금의 이월분)
+  const lp = getPartner(partnerId);
+  if (lp) {
+    const wantKind = kind === "purchases" ? "지급" : "수금";
+    (lp.openingPayments || []).forEach((x) => {
+      if (x.kind === wantKind && inRange(x.date, from, to)) {
+        events.push({ date: x.date, type: "pay", desc: "이월분 " + wantKind + (x.method ? " (" + x.method + ")" : "") + (x.memo ? " " + x.memo : ""), amount: Number(x.amount) || 0 });
+      }
+    });
+  }
   list.forEach((r) => {
     if (r.partnerId !== partnerId) return;
     if (inRange(r.date, from, to)) {

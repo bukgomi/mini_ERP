@@ -58,6 +58,8 @@ function migrateState(raw) {
    "expenses", "receipts", "documents", "cashEntries", "closedYears"].forEach((k) => {
     if (!Array.isArray(s[k])) s[k] = [];
   });
+  // 거래처별 이월 충당 기록 (일괄 수금에서 기초 이월분을 갚은 이력) — 구버전 파일 보정
+  s.partners.forEach((p) => { if (!Array.isArray(p.openingPayments)) p.openingPayments = []; });
   if (!Array.isArray(s.expenseCategories) || !s.expenseCategories.length) {
     s.expenseCategories = defaultState().expenseCategories;
   }
@@ -136,20 +138,31 @@ function payStatus(rec) {
 }
 
 /**
- * 거래처별 미수금 잔액 = 기초 이월(openingBalance) + 모든 매출 건 미수금 합
+ * 기초 이월 잔액의 "남은 금액" — 이월 충당 기록(openingPayments)을 뺀 값
+ * kind: "sales"(이월 미수금) | "purchases"(이월 미지급금)
+ * beforeDate를 주면 그 날짜 이전 충당분만 뺀다 (전잔금 계산용)
+ */
+function openingRemaining(p, kind, beforeDate) {
+  if (!p) return 0;
+  const ob = Number(p.openingBalance) || 0;
+  let base = kind === "purchases" ? (ob < 0 ? -ob : 0) : (ob > 0 ? ob : 0);
+  const wantKind = kind === "purchases" ? "지급" : "수금";
+  (p.openingPayments || []).forEach((x) => {
+    if (x.kind !== wantKind) return;
+    if (beforeDate && !(x.date < beforeDate)) return;
+    base -= Number(x.amount) || 0;
+  });
+  return base;
+}
+
+/**
+ * 거래처별 미수금 잔액 = 이월 잔여분 + 모든 매출 건 미수금 합
  * kind: "sales"(미수금) | "purchases"(미지급금)
  */
 function partnerBalance(partnerId, kind) {
   const p = getPartner(partnerId);
   const list = kind === "purchases" ? state.purchases : state.sales;
-  let bal = 0;
-  if (p) {
-    // openingBalance: 매출처면 미수금(+), 매입처면 미지급금은 음수로 입력하는 규칙 대신
-    // 단순화: 매출 잔액 계산에는 openingBalance>0 부분, 매입 잔액에는 <0 부분의 절대값 사용
-    const ob = Number(p.openingBalance) || 0;
-    if (kind === "purchases") bal += ob < 0 ? -ob : 0;
-    else bal += ob > 0 ? ob : 0;
-  }
+  let bal = openingRemaining(p, kind);
   list.forEach((r) => { if (r.partnerId === partnerId) bal += unpaidAmount(r); });
   return bal;
 }
@@ -162,12 +175,7 @@ function partnerBalance(partnerId, kind) {
 function partnerBalanceBefore(partnerId, dateStr, kind) {
   const p = getPartner(partnerId);
   const list = kind === "purchases" ? state.purchases : state.sales;
-  let bal = 0;
-  if (p) {
-    const ob = Number(p.openingBalance) || 0;
-    if (kind === "purchases") bal += ob < 0 ? -ob : 0;
-    else bal += ob > 0 ? ob : 0;
-  }
+  let bal = openingRemaining(p, kind, dateStr); // 기준일 이전 이월 충당분 반영
   list.forEach((r) => {
     if (r.partnerId !== partnerId) return;
     if (r.date < dateStr) bal += Number(r.total) || 0;   // 기준일 이전 매출 전액
@@ -233,6 +241,14 @@ function buildCashEntries() {
   state.expenses.forEach((e) => {
     rows.push({ date: e.date, kind: "출금", amount: Number(e.amount) || 0,
       desc: "경비: " + (e.category || "") + " " + (e.desc || ""), auto: true });
+  });
+  // 이월 미수금 수금 / 이월 미지급금 지급 (일괄 수금의 이월 충당분)
+  state.partners.forEach((p) => {
+    (p.openingPayments || []).forEach((x) => {
+      rows.push({ date: x.date, kind: x.kind === "지급" ? "출금" : "입금", amount: Number(x.amount) || 0,
+        desc: (x.kind === "지급" ? "이월 미지급금 지급: " : "이월 미수금 수금: ") + p.name +
+          (x.method ? " (" + x.method + ")" : ""), auto: true });
+    });
   });
   state.cashEntries.forEach((c) => {
     rows.push({ date: c.date, kind: c.kind, amount: Number(c.amount) || 0,

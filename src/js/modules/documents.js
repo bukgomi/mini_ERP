@@ -283,11 +283,15 @@ function documentForm(type, docId, saleId) {
     if (autofill) {
       // 전잔금: 발행일 이전 이 거래처의 미수금 잔액 (기초 이월 포함)
       overlay.querySelector("#dcf-prev").value = fmtMoney(partnerBalanceBefore(selPartnerId, date, "sales"));
-      // 입금: 발행일 당일 이 거래처의 수금 합계
+      // 입금: 발행일 당일 이 거래처의 수금 합계 (건별 수금 + 이월 충당 수금)
       let dayPaid = 0;
       state.sales.forEach((s) => {
         if (s.partnerId !== selPartnerId) return;
         (s.payments || []).forEach((pm) => { if (pm.date === date) dayPaid += Number(pm.amount) || 0; });
+      });
+      const selP = getPartner(selPartnerId);
+      (selP && selP.openingPayments || []).forEach((x) => {
+        if (x.kind === "수금" && x.date === date) dayPaid += Number(x.amount) || 0;
       });
       overlay.querySelector("#dcf-paid").value = fmtMoney(dayPaid);
     }

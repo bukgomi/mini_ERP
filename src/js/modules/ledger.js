@@ -435,7 +435,12 @@ async function executeYearClosing(fy) {
 
     // ③ 새 연도 상태 구성 — 마감 연도 이후 데이터(새해에 미리 입력한 것)는 유지
     const cutoff = fy + "-12-31";
-    state.partners.forEach((p) => { p.openingBalance = nextOpenings[p.id] || 0; });
+    state.partners.forEach((p) => {
+      p.openingBalance = nextOpenings[p.id] || 0;
+      // 이월 충당 기록: 마감 연도분은 새 openingBalance에 이미 반영됐으므로 제거,
+      // 새해에 입력된 충당분만 남긴다 (남긴 것은 새 이월 잔액에서 계속 차감됨)
+      p.openingPayments = (p.openingPayments || []).filter((x) => (x.date || "") > cutoffDate);
+    });
     state.items.forEach((i) => { i.baseStock = nextStocks[i.id] || 0; });
     state.cashOpening = cashFinal;
     state.sales = state.sales.filter((r) => r.date > cutoff);
