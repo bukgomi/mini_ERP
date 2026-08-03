@@ -9,6 +9,7 @@ let payLedgerPartnerId = ""; // 원장 보기 거래처
 let payLedgerFrom = "";      // 원장 기간
 let payLedgerTo = "";
 let payLedgerKind = "sales"; // 원장 구분: sales=매출·수금 | purchases=매입·지급
+let payLedgerView = "summary"; // 전체 보기 방식: summary=거래처별 요약표 | timeline=시간순 내역
 
 function renderPayments(el) {
   el.innerHTML =
@@ -589,6 +590,12 @@ function renderPartnerLedger(el) {
     '<option value="sales"' + (isRecv ? " selected" : "") + ">매출·수금 (미수금)</option>" +
     '<option value="purchases"' + (!isRecv ? " selected" : "") + ">매입·지급 (미지급금)</option>" +
     "</select>" +
+    // 전체 보기일 때만: 요약표 ↔ 시간순 내역 전환
+    (!payLedgerPartnerId ?
+      '<select id="lg-view">' +
+      '<option value="summary"' + (payLedgerView === "summary" ? " selected" : "") + ">거래처별 요약표</option>" +
+      '<option value="timeline"' + (payLedgerView === "timeline" ? " selected" : "") + ">시간순 전체 내역</option>" +
+      "</select>" : "") +
     '<input type="date" id="lg-from" value="' + esc(payLedgerFrom) + '"> <span>~</span> ' +
     '<input type="date" id="lg-to" value="' + esc(payLedgerTo) + '">' +
     '<button class="btn btn-sm" id="lg-csv">CSV 내려받기</button>' +
@@ -597,10 +604,89 @@ function renderPartnerLedger(el) {
 
   el.querySelector("#lg-partner").addEventListener("change", (e) => { payLedgerPartnerId = e.target.value; renderApp(); });
   el.querySelector("#lg-kind").addEventListener("change", (e) => { payLedgerKind = e.target.value; renderApp(); });
+  const viewSel = el.querySelector("#lg-view");
+  if (viewSel) viewSel.addEventListener("change", (e) => { payLedgerView = e.target.value; renderApp(); });
   el.querySelector("#lg-from").addEventListener("change", (e) => { payLedgerFrom = e.target.value; renderApp(); });
   el.querySelector("#lg-to").addEventListener("change", (e) => { payLedgerTo = e.target.value; renderApp(); });
 
   const tableEl = el.querySelector("#lg-table");
+
+  // ---- 거래처 미선택 + 시간순 보기: 전체 매출·입금을 날짜순으로 한 표에 ----
+  if (!payLedgerPartnerId && payLedgerView === "timeline") {
+    const listAll = payLedgerKind === "purchases" ? state.purchases : state.sales;
+    const wantKind = payLedgerKind === "purchases" ? "지급" : "수금";
+    const tradeLabel = isRecv ? "매출" : "매입";
+    const payLabel2 = isRecv ? "입금" : "지급";
+    const unpaidLbl = isRecv ? "미수금" : "미지급금";
+
+    // 기간 내 이벤트: 매출(매입) 발생 + 건별 입금(지급) + 이월 충당
+    const events = [];
+    listAll.forEach((r) => {
+      if (!getPartner(r.partnerId)) return; // 요약표와 동일 기준 (삭제된 거래처 제외)
+      const pn = partnerName(r.partnerId);
+      if (inRange(r.date, payLedgerFrom, payLedgerTo)) {
+        events.push({ date: r.date, t: "trade", pn, desc: lineSummary(r.lines) + " (" + r.status + ")", amount: Number(r.total) || 0 });
+      }
+      (r.payments || []).forEach((pm) => {
+        if (inRange(pm.date, payLedgerFrom, payLedgerTo)) {
+          events.push({ date: pm.date, t: "pay", pn, desc: (pm.method || "") + (pm.memo ? " " + pm.memo : ""), amount: Number(pm.amount) || 0 });
+        }
+      });
+    });
+    state.partners.forEach((p) => {
+      (p.openingPayments || []).forEach((x) => {
+        if (x.kind === wantKind && inRange(x.date, payLedgerFrom, payLedgerTo)) {
+          events.push({ date: x.date, t: "pay", pn: p.name, desc: "이월분 " + wantKind + (x.method ? " (" + x.method + ")" : ""), amount: Number(x.amount) || 0 });
+        }
+      });
+    });
+    // 날짜순, 같은 날은 거래 먼저 → 입금 나중 (원장과 동일 규칙)
+    events.sort((a, b) => a.date.localeCompare(b.date) || (a.t === "trade" ? -1 : 1) - (b.t === "trade" ? -1 : 1));
+
+    // 시작 잔액 = 기간 시작 전 전체 거래처 잔액 합
+    let bal = sum(state.partners, (p) => partnerBalanceBefore(p.id, payLedgerFrom, payLedgerKind));
+    const startBal = bal;
+    const bodyRows = events.map((ev) => {
+      bal += ev.t === "trade" ? ev.amount : -ev.amount;
+      return "<tr><td>" + esc(ev.date) + "</td>" +
+        "<td>" + (ev.t === "trade"
+          ? '<span class="badge ' + (isRecv ? "blue" : "orange") + '">' + tradeLabel + "</span>"
+          : '<span class="badge green">' + payLabel2 + "</span>") + "</td>" +
+        "<td><b>" + esc(ev.pn) + "</b></td><td>" + esc(ev.desc) + "</td>" +
+        '<td class="num">' + (ev.t === "trade" ? fmtMoney(ev.amount) : "") + "</td>" +
+        '<td class="num">' + (ev.t === "pay" ? fmtMoney(ev.amount) : "") + "</td>" +
+        '<td class="num"><b>' + fmtMoney(bal) + "</b></td></tr>";
+    }).join("");
+    const totTrade = sum(events.filter((e) => e.t === "trade"), (e) => e.amount);
+    const totPay = sum(events.filter((e) => e.t === "pay"), (e) => e.amount);
+
+    tableEl.innerHTML =
+      '<div class="card"><h3>시간순 전체 내역 <span class="sub">(' + (isRecv ? "매출·수금" : "매입·지급") +
+      " · 마지막 열은 전체 " + unpaidLbl + " 누적)</span></h3>" +
+      '<div class="table-wrap"><table class="grid">' +
+      '<thead><tr><th>날짜</th><th>구분</th><th>거래처</th><th>내용</th>' +
+      '<th class="num">' + tradeLabel + '액</th><th class="num">' + payLabel2 + '액</th><th class="num">' + unpaidLbl + " 누적</th></tr></thead><tbody>" +
+      '<tr class="subtotal-row"><td>' + esc(payLedgerFrom) + '</td><td></td><td>전잔금 (기간 시작 전)</td><td></td><td></td><td></td><td class="num"><b>' + fmtMoney(startBal) + "</b></td></tr>" +
+      (events.length ? bodyRows : '<tr><td colspan="7"><div class="empty-msg">기간 내 내역이 없습니다.</div></td></tr>') +
+      '<tr class="total-row"><td colspan="4">기간 합계 (' + events.length + '건)</td>' +
+      '<td class="num">' + fmtMoney(totTrade) + '</td><td class="num">' + fmtMoney(totPay) + "</td>" +
+      '<td class="num">' + fmtMoney(bal) + "</td></tr>" +
+      "</tbody></table></div></div>";
+
+    el.querySelector("#lg-csv").addEventListener("click", () => {
+      let cb = startBal;
+      downloadCSV("시간순내역_" + (isRecv ? "매출수금" : "매입지급") + "_" + payLedgerFrom + "~" + payLedgerTo + ".csv", [
+        ["날짜", "구분", "거래처", "내용", tradeLabel + "액", payLabel2 + "액", "누적 잔액"],
+        [payLedgerFrom, "", "전잔금 (기간 시작 전)", "", "", "", startBal],
+        ...events.map((ev) => {
+          cb += ev.t === "trade" ? ev.amount : -ev.amount;
+          return [ev.date, ev.t === "trade" ? tradeLabel : payLabel2, ev.pn, ev.desc,
+            ev.t === "trade" ? ev.amount : "", ev.t === "pay" ? ev.amount : "", cb];
+        })
+      ]);
+    });
+    return;
+  }
 
   // ---- 거래처 미선택: 전체 거래처 원장 요약 (전잔금 → 기간 거래 → 기간 입금 → 기말 잔액) ----
   if (!payLedgerPartnerId) {
