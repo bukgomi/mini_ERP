@@ -71,6 +71,7 @@ function supplyFromTotal(total) {
 /** 숫자를 한글 금액 표기로 변환 (예: 1200000 → "일백이십만") — 견적서 "일금 ... 원整" 용 */
 function moneyToKorean(n) {
   n = Math.floor(Number(n) || 0);
+  if (n < 0) return "마이너스 " + moneyToKorean(-n); // 반품(음수) 문서 대응
   if (n === 0) return "영";
   const digits = ["", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
   const smallUnits = ["", "십", "백", "천"];

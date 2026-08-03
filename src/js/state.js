@@ -128,10 +128,11 @@ function unpaidAmount(rec) {
   return (Number(rec.total) || 0) - paidAmount(rec);
 }
 
-/** 결제 상태: 완납 / 부분수금 / 미수 */
+/** 결제 상태: 완납 / 부분수금 / 미수 / 반품(합계 음수) */
 function payStatus(rec) {
   const paid = paidAmount(rec);
   const total = Number(rec.total) || 0;
+  if (total < 0) return "반품";
   if (paid >= total && total > 0) return "완납";
   if (paid > 0) return "부분";
   return "미수";

@@ -121,7 +121,8 @@ function renderTradeList(kind, el) {
 function tradeRowHTML(kind, r) {
   const cfg = TRADE_CFG[kind];
   const ps = payStatus(r);
-  const payBadge = ps === "완납" ? '<span class="badge green">완납</span>'
+  const payBadge = ps === "반품" ? '<span class="badge red">↩ 반품</span>'
+    : ps === "완납" ? '<span class="badge green">완납</span>'
     : ps === "부분" ? '<span class="badge orange">부분' + cfg.payLabel + "</span>"
     : '<span class="badge red">' + (kind === "sales" ? "미수" : "미지급") + "</span>";
   const unpaid = unpaidAmount(r);
@@ -133,7 +134,8 @@ function tradeRowHTML(kind, r) {
     '<td class="num">' + fmtMoney(r.supply) + "</td>" +
     '<td class="num">' + fmtMoney(r.vat) + "</td>" +
     '<td class="num"><b>' + fmtMoney(r.total) + "</b></td>" +
-    '<td class="num">' + (unpaid > 0 ? '<b style="color:var(--danger)">' + fmtMoney(unpaid) + "</b>" : "0") + "</td>" +
+    '<td class="num">' + (unpaid > 0 ? '<b style="color:var(--danger)">' + fmtMoney(unpaid) + "</b>"
+      : unpaid < 0 ? '<b style="color:var(--accent)">' + fmtMoney(unpaid) + "</b>" : "0") + "</td>" +
     "<td>" + payBadge + "</td>" +
     '<td><button class="btn btn-sm" data-t-status="' + r.id + '" title="클릭하여 상태 변경">' + esc(r.status) + "</button></td>" +
     '<td class="actions">' +
@@ -302,8 +304,8 @@ function tradeForm(kind, id) {
       if (!partnerId) { toast("거래처를 선택하세요.", "error"); return; }
       const cleanLines = lines
         .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
-        .filter((l) => l.name && l.qty > 0);
-      if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요 (품명·수량 필수).", "error"); return; }
+        .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력
+      if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요 (품명·수량 필수). 반품은 수량을 음수(-)로 입력하세요.", "error"); return; }
 
       const supply = sum(cleanLines, (l) => l.qty * l.unitPrice);
       const vat = vatExempt ? 0 : calcVat(supply);

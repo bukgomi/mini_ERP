@@ -193,6 +193,19 @@ function bulkPaymentForm(kind, presetPartnerId) {
     let remain = amount;
     const rows = [];
 
+    // ⓪ 반품(음수 미수) 건 자동 상계 — 반품액만큼 배분 여력이 늘어난다
+    //    예: 미수 500,000 + 반품 -20,500 = 잔액 479,500 입금 시 → 반품 상계 후 500,000 전액 충당
+    const returnRecs = (kind === "purchases" ? state.purchases : state.sales)
+      .filter((r) => r.partnerId === selPid && unpaidAmount(r) < 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const returnAllocs = [];
+    returnRecs.forEach((r) => {
+      const un = unpaidAmount(r); // 음수
+      remain -= un;               // remain 증가
+      returnAllocs.push({ rec: r, amount: un });
+      rows.push(["↩ 반품 상계: " + esc(r.date) + " " + esc(lineSummary(r.lines)), un, un, 0]);
+    });
+
     // ① 이월 잔여분 먼저
     const openRemain = openingRemaining(p, kind);
     let openingAlloc = 0;
@@ -216,8 +229,8 @@ function bulkPaymentForm(kind, presetPartnerId) {
     });
 
     const over = remain > 0; // 총 잔액보다 많이 입력
-    currentPlan = over ? null : { openingAlloc, saleAllocs };
-    saveBtn.disabled = over || (!openingAlloc && !saleAllocs.length);
+    currentPlan = over ? null : { openingAlloc, saleAllocs: returnAllocs.concat(saleAllocs) };
+    saveBtn.disabled = over || (!openingAlloc && !saleAllocs.length && !returnAllocs.length);
 
     box.innerHTML =
       '<div class="card" style="margin-bottom:0;padding:12px">' +

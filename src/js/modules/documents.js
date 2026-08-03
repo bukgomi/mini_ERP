@@ -28,7 +28,8 @@ function renderDocuments(el) {
       docs.map((d) => {
         const total = docTotal(d);
         return "<tr><td>" + esc(d.no) + "</td>" +
-          "<td>" + (d.type === "quote" ? '<span class="badge blue">견적서</span>' : '<span class="badge green">거래명세서</span>') + "</td>" +
+          "<td>" + (d.type === "quote" ? '<span class="badge blue">견적서</span>' : '<span class="badge green">거래명세서</span>') +
+          (total < 0 ? ' <span class="badge red">↩ 반품</span>' : "") + "</td>" +
           "<td>" + esc(d.date) + "</td><td>" + esc(partnerName(d.partnerId)) + "</td>" +
           '<td class="num">' + fmtMoney(total) + "원</td>" +
           '<td class="actions">' +
@@ -450,8 +451,8 @@ function documentForm(type, docId, saleId) {
       if (!partnerId || !getPartner(partnerId)) { toast("거래처를 검색해 목록에서 선택하세요.", "error"); return; }
       const cleanLines = lines
         .map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
-        .filter((l) => l.name && l.qty > 0);
-      if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요.", "error"); return; }
+        .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력 (마이너스 명세서)
+      if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요. 반품은 수량을 음수(-)로 입력하세요.", "error"); return; }
 
       const date = overlay.querySelector("#dcf-date").value || today();
       const dayTotal = stmtAmounts(cleanLines, discountRate, isStmt && showVat).total;
@@ -719,8 +720,9 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
   // 마지막 장에만 계/공제/정산 표시
   const isLast = pageIdx === pageCount - 1;
 
+  const isReturn = a.total < 0 || (d.settle && d.settle.dayTotal < 0); // 반품(마이너스) 명세서
   return '<div class="stmt-copy">' +
-    '<div class="stmt-title">거 래 명 세 서</div>' +
+    '<div class="stmt-title">거 래 명 세 서' + (isReturn ? ' <span style="font-size:15px;letter-spacing:2px;vertical-align:middle">(반품)</span>' : "") + "</div>" +
     '<div class="stmt-sub">( ' + copyTitle + " )</div>" +
     (pageCount > 1 ? '<div style="text-align:right;font-size:11px">' + (pageIdx + 1) + " / " + pageCount + " 장</div>" : "") +
 
