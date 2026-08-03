@@ -65,7 +65,12 @@ function renderUnpaidOverview(el, kind) {
     tile("90일 이상", fmtMoney(aging[3]) + "원", "red") +
     "</div>" +
 
-    '<div style="margin-bottom:14px"><button class="btn btn-primary" id="btn-bulk-pay">💰 일괄 ' + cfg.payLabel + " 입력 (거래처 단위 자동 배분)</button></div>" +
+    '<div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">' +
+    '<button class="btn btn-primary" id="btn-bulk-pay">💰 일괄 ' + cfg.payLabel + " 입력 (거래처 단위 자동 배분)</button>" +
+    '<button class="btn" id="btn-pay-template">📄 엑셀 양식 받기</button>' +
+    '<label class="btn">📥 엑셀 업로드<input type="file" id="pay-import" accept=".xlsx,.csv" style="display:none"></label>' +
+    '<button class="btn" id="btn-pay-xlsx">📤 엑셀 다운로드</button>' +
+    "</div>" +
 
     '<div class="card"><h3>거래처별 ' + cfg.unpaidLabel + " 잔액 <span class=\"sub\">(이월 잔여분 포함)</span></h3>" +
     (partnerRows.length ?
@@ -100,6 +105,12 @@ function renderUnpaidOverview(el, kind) {
 
   el.querySelectorAll("[data-pay]").forEach((b) => b.addEventListener("click", () => paymentForm(kind, b.getAttribute("data-pay"))));
   el.querySelector("#btn-bulk-pay").addEventListener("click", () => bulkPaymentForm(kind, ""));
+  el.querySelector("#btn-pay-template").addEventListener("click", () => downloadPaymentTemplate(kind));
+  el.querySelector("#btn-pay-xlsx").addEventListener("click", () => exportPaymentsXlsx(kind));
+  el.querySelector("#pay-import").addEventListener("change", (e) => {
+    if (e.target.files.length) importPaymentsFile(kind, e.target.files[0]);
+    e.target.value = "";
+  });
   el.querySelectorAll("[data-bulk]").forEach((b) => b.addEventListener("click", () => bulkPaymentForm(kind, b.getAttribute("data-bulk"))));
   el.querySelectorAll("[data-ledger]").forEach((b) => b.addEventListener("click", () => {
     payLedgerPartnerId = b.getAttribute("data-ledger");
@@ -276,6 +287,182 @@ function bulkPaymentForm(kind, presetPartnerId) {
   });
   document.body.appendChild(overlay);
   if (!selPid) $("#bp-partner").focus();
+}
+
+/* ---------- 수금·지급 엑셀 업로드/다운로드 ---------- */
+
+/**
+ * FIFO 배분 실행 (일괄 수금과 동일 규칙: 반품 상계 → 이월 잔여 → 오래된 미결제 순)
+ * 금액이 거래처 잔액을 초과하면 아무것도 기록하지 않고 false 반환
+ */
+function applyBulkPayment(kind, partnerId, amount, date, method, memo) {
+  const p = getPartner(partnerId);
+  if (!p || amount <= 0) return false;
+  if (amount > partnerBalance(partnerId, kind)) return false;
+  const isRecv = kind === "sales";
+  const listAll = kind === "purchases" ? state.purchases : state.sales;
+  let remain = amount;
+
+  // ⓪ 반품(음수 미수) 상계
+  listAll.filter((r) => r.partnerId === partnerId && unpaidAmount(r) < 0)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach((r) => {
+      const un = unpaidAmount(r);
+      remain -= un;
+      r.payments = r.payments || [];
+      r.payments.push({ date, amount: un, method, memo: memo + " (반품 상계)" });
+    });
+  // ① 이월 잔여분
+  const openRemain = openingRemaining(p, kind);
+  if (openRemain > 0 && remain > 0) {
+    const take = Math.min(openRemain, remain);
+    remain -= take;
+    p.openingPayments = p.openingPayments || [];
+    p.openingPayments.push({ date, amount: take, method, memo, kind: isRecv ? "수금" : "지급" });
+  }
+  // ② 오래된 미결제 건 순
+  listAll.filter((r) => r.partnerId === partnerId && unpaidAmount(r) > 0)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach((r) => {
+      if (remain <= 0) return;
+      const take = Math.min(unpaidAmount(r), remain);
+      remain -= take;
+      r.payments = r.payments || [];
+      r.payments.push({ date, amount: take, method, memo });
+    });
+  return true;
+}
+
+/** 업로드용 엑셀 양식 */
+function downloadPaymentTemplate(kind) {
+  const cfg = TRADE_CFG[kind];
+  downloadXlsx(cfg.payLabel + "_업로드양식.xlsx", [
+    ["날짜", "거래처명", "금액", "결제수단", "메모"],
+    ["2026-07-15", "예시상사", 500000, "계좌이체", "7월분 정산 — 예시 줄은 지우고 입력하세요"]
+  ], cfg.payLabel);
+  toast("양식을 내려받았습니다. 각 행의 금액이 그 거래처의 오래된 미결제 건부터 자동 배분됩니다.", "success");
+}
+
+/** 수금(지급) 내역 전체 엑셀 다운로드 — 건별 수금 + 이월 충당 전부 */
+function exportPaymentsXlsx(kind) {
+  const cfg = TRADE_CFG[kind];
+  const isRecv = kind === "sales";
+  const listAll = kind === "purchases" ? state.purchases : state.sales;
+  const rows = [];
+  listAll.forEach((r) => {
+    (r.payments || []).forEach((pm) => {
+      rows.push([pm.date, partnerName(r.partnerId), "건별", r.date + " " + lineSummary(r.lines),
+        Number(pm.amount) || 0, pm.method || "", pm.memo || ""]);
+    });
+  });
+  state.partners.forEach((p) => {
+    (p.openingPayments || []).forEach((x) => {
+      if (x.kind === (isRecv ? "수금" : "지급"))
+        rows.push([x.date, p.name, "이월 충당", "기초 이월분", Number(x.amount) || 0, x.method || "", x.memo || ""]);
+    });
+  });
+  rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  downloadXlsx(cfg.payLabel + "내역_" + today() + ".xlsx", [
+    ["날짜", "거래처명", "구분", "대상 거래", "금액", "결제수단", "메모"], ...rows
+  ], cfg.payLabel);
+  toast(cfg.payLabel + " 기록 " + rows.length + "건을 엑셀로 내려받았습니다.", "success");
+}
+
+/** 엑셀에서 수금/지급 일괄 등록 — 각 행을 FIFO 자동 배분 */
+async function importPaymentsFile(kind, file) {
+  if (guardReadOnly()) return;
+  const cfg = TRADE_CFG[kind];
+  let rows;
+  try {
+    rows = await parseSpreadsheetFile(file);
+  } catch (err) { toast(err.message, "error"); return; }
+
+  const COLS = [
+    ["날짜", "date", ["수금일", "지급일", "입금일", "거래일", "일자"]],
+    ["거래처명", "partner", ["거래처", "상호"]],
+    ["금액", "amount", ["수금액", "지급액", "입금액", "금 액"]],
+    ["결제수단", "method", ["방법", "결제방법", "결제구분"]],
+    ["메모", "memo", ["비고", "적요"]]
+  ];
+  let mapped = null;
+  for (const anchor of ["거래처명", "거래처", "금액"]) {
+    mapped = mapSpreadsheetHeader(rows, COLS, anchor);
+    if (mapped) break;
+  }
+  if (!mapped || mapped.colMap.partner === undefined || mapped.colMap.amount === undefined) {
+    toast('헤더를 찾을 수 없습니다. "날짜·거래처명·금액" 열이 필요합니다. [엑셀 양식 받기]를 참고하세요.', "error");
+    return;
+  }
+  const { headerIdx, colMap } = mapped;
+
+  // 위에서부터 순서대로 시뮬레이션 — 앞 행이 잔액을 줄이므로 순서대로 검사
+  const simBal = {}; // partnerId → 남은 잔액
+  const parsed = [];
+  const errors = [];
+  rows.slice(headerIdx + 1).forEach((r, i) => {
+    const rowNo = headerIdx + i + 2;
+    const get = (f) => colMap[f] === undefined ? "" : String(r[colMap[f]] ?? "").trim();
+    if (!r.some((c) => String(c).trim() !== "")) return;
+
+    const date = normalizeDateCell(colMap.date === undefined ? "" : r[colMap.date]) || today();
+    const pname = get("partner");
+    const amount = parseMoney(r[colMap.amount]);
+    const partner = state.partners.find((p) => p.name === pname);
+    if (!pname) { errors.push(rowNo + "행: 거래처가 비어 있어 건너뜁니다."); return; }
+    if (!partner) { errors.push(rowNo + "행: 거래처 '" + pname + "'를 찾을 수 없습니다. (수금은 등록된 거래처만 가능)"); return; }
+    if (amount <= 0) { errors.push(rowNo + "행: 금액이 0 이하라 건너뜁니다."); return; }
+
+    if (!(partner.id in simBal)) simBal[partner.id] = partnerBalance(partner.id, kind);
+    const ok = amount <= simBal[partner.id];
+    if (ok) simBal[partner.id] -= amount;
+    else errors.push(rowNo + "행: " + pname + "의 " + cfg.unpaidLabel + " 잔액(" + fmtMoney(simBal[partner.id]) + ")보다 금액(" + fmtMoney(amount) + ")이 큽니다 — 건너뜁니다.");
+
+    const mRaw = get("method");
+    const method = /카드/.test(mRaw) ? "카드" : /이체|계좌|입금|무통장|송금/.test(mRaw) ? "계좌이체" : /현금/.test(mRaw) ? "현금" : "기타";
+    if (ok) parsed.push({ rowNo, partnerId: partner.id, pname, date, amount, method, memo: get("memo") || "엑셀 일괄 " + cfg.payLabel });
+  });
+
+  if (!parsed.length) {
+    toast("등록할 수 있는 행이 없습니다." + (errors.length ? " (" + errors.length + "건 오류)" : ""), "error");
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML =
+    '<div class="modal-box wide"><h3 style="margin-bottom:10px">' + cfg.payLabel + " 엑셀 업로드 미리보기 — " + esc(file.name) + "</h3>" +
+    '<p style="margin-bottom:10px">배분할 ' + cfg.payLabel + " <b>" + parsed.length + "건 · " + fmtMoney(sum(parsed, (x) => x.amount)) + "원</b>" +
+    (errors.length ? ' · <span style="color:var(--danger)">건너뜀 ' + errors.length + "건</span>" : "") + "</p>" +
+    '<p class="sub" style="margin-bottom:10px">각 행의 금액은 그 거래처의 이월 잔여분 → 오래된 미결제 건 순서로 자동 배분됩니다 (반품 자동 상계).</p>' +
+    '<div class="table-wrap" style="max-height:300px;overflow-y:auto"><table class="grid">' +
+    '<thead><tr><th>행</th><th>날짜</th><th>거래처</th><th class="num">금액</th><th>방법</th><th>메모</th></tr></thead><tbody>' +
+    parsed.map((x) =>
+      "<tr><td>" + x.rowNo + "</td><td>" + esc(x.date) + "</td><td><b>" + esc(x.pname) + "</b></td>" +
+      '<td class="num">' + fmtMoney(x.amount) + "</td><td>" + esc(x.method) + "</td><td>" + esc(x.memo) + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    (errors.length ?
+      '<details style="margin-top:10px"><summary class="sub" style="cursor:pointer">건너뛴 행 ' + errors.length + "건 보기</summary>" +
+      '<p class="sub" style="margin-top:6px">' + errors.map(esc).join("<br>") + "</p></details>" : "") +
+    '<div class="modal-btns" style="margin-top:16px">' +
+    '<button class="btn" data-act="cancel">취소</button>' +
+    '<button class="btn btn-primary" data-act="import">배분 실행</button></div></div>';
+
+  overlay.addEventListener("click", (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute("data-act");
+    if (e.target === overlay || act === "cancel") { overlay.remove(); return; }
+    if (act === "import") {
+      let done = 0, failed = 0;
+      parsed.forEach((x) => {
+        if (applyBulkPayment(kind, x.partnerId, x.amount, x.date, x.method, x.memo)) done++;
+        else failed++;
+      });
+      markDirty();
+      overlay.remove();
+      renderApp();
+      toast(cfg.payLabel + " 업로드 완료: " + done + "건 배분" + (failed ? ", 실패 " + failed + "건" : ""), "success");
+    }
+  });
+  document.body.appendChild(overlay);
 }
 
 /* ---------- 수금/지급 입력 (부분 수금 지원) ---------- */

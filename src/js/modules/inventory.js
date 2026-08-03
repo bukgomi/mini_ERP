@@ -6,27 +6,21 @@
 let itemSearch = "";
 let itemHistoryId = null; // 입출고 이력 보는 품목
 
-function renderInventory(el) {
+/** 검색어로 품목 목록 계산 */
+function computeItemList() {
   const q = itemSearch.trim().toLowerCase();
-  const list = state.items.filter((i) =>
-    !q || (i.name || "").toLowerCase().includes(q) || (i.code || "").toLowerCase().includes(q)
-  );
+  return state.items.filter((i) =>
+    !q || (i.name || "").toLowerCase().includes(q) || (i.code || "").toLowerCase().includes(q));
+}
 
-  el.innerHTML =
-    '<div class="page-title">📋 품목·재고 관리' +
-    '<span class="spacer"></span>' +
-    '<button class="btn" id="btn-item-template">📄 엑셀 양식 받기</button>' +
-    '<label class="btn">📥 엑셀 업로드<input type="file" id="item-import" accept=".xlsx,.csv" style="display:none"></label>' +
-    '<button class="btn" id="btn-item-xlsx">📤 엑셀 다운로드</button>' +
-    '<button class="btn" id="btn-adjust">재고조정</button>' +
-    '<button class="btn btn-primary" id="btn-add-item">+ 품목 등록</button></div>' +
+function itemSummaryText(list) {
+  return list.length + "개 품목 · 재고 금액 합계 " +
+    fmtMoney(sum(list, (i) => currentStock(i.id) * (Number(i.costPrice) || 0))) + "원";
+}
 
-    '<div class="filter-bar">' +
-    '<input type="text" id="item-search" placeholder="품목코드·품명 검색" value="' + esc(itemSearch) + '" style="width:240px">' +
-    '<span class="sub">' + list.length + "개 품목 · 재고 금액 합계 " +
-    fmtMoney(sum(list, (i) => currentStock(i.id) * (Number(i.costPrice) || 0))) + "원</span></div>" +
-
-    '<div class="card"><div class="table-wrap"><table class="grid">' +
+/** 재고 현황 표 HTML */
+function itemTableHTML(list) {
+  return '<div class="table-wrap"><table class="grid">' +
     "<thead><tr><th>품목코드</th><th>품명</th><th>규격</th><th>단위</th>" +
     '<th class="num">판매가</th><th class="num">매입가</th>' +
     '<th class="num">현재고</th><th class="num">안전재고</th><th>상태</th><th class="num">재고 금액</th><th></th></tr></thead><tbody>' +
@@ -43,14 +37,47 @@ function renderInventory(el) {
         '<td class="actions"><button class="btn btn-sm" data-edit="' + i.id + '">수정</button> ' +
         '<button class="btn btn-sm" data-del="' + i.id + '">삭제</button></td></tr>';
     }).join("") : '<tr><td colspan="11"><div class="empty-msg">등록된 품목이 없습니다.</div></td></tr>') +
-    "</tbody></table></div></div>" +
+    "</tbody></table></div>";
+}
+
+/** 행 이벤트 바인딩 (부분 갱신 후 재사용) */
+function bindItemRows(scope) {
+  scope.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => itemForm(b.getAttribute("data-edit"))));
+  scope.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deleteItem(b.getAttribute("data-del"))));
+  scope.querySelectorAll("[data-hist]").forEach((a) => a.addEventListener("click", (e) => {
+    e.preventDefault();
+    itemHistoryId = a.getAttribute("data-hist");
+    renderApp();
+    setTimeout(() => { const d = document.getElementById("item-history"); if (d) d.scrollIntoView({ behavior: "smooth" }); }, 50);
+  }));
+}
+
+function renderInventory(el) {
+  const list = computeItemList();
+
+  el.innerHTML =
+    '<div class="page-title">📋 품목·재고 관리' +
+    '<span class="spacer"></span>' +
+    '<button class="btn" id="btn-item-template">📄 엑셀 양식 받기</button>' +
+    '<label class="btn">📥 엑셀 업로드<input type="file" id="item-import" accept=".xlsx,.csv" style="display:none"></label>' +
+    '<button class="btn" id="btn-item-xlsx">📤 엑셀 다운로드</button>' +
+    '<button class="btn" id="btn-adjust">재고조정</button>' +
+    '<button class="btn btn-primary" id="btn-add-item">+ 품목 등록</button></div>' +
+
+    '<div class="filter-bar">' +
+    '<input type="text" id="item-search" placeholder="품목코드·품명 검색" value="' + esc(itemSearch) + '" style="width:240px">' +
+    '<span class="sub" id="item-count">' + itemSummaryText(list) + "</span></div>" +
+
+    '<div class="card" id="item-card">' + itemTableHTML(list) + "</div>" +
     '<div id="item-history"></div>';
 
+  // 검색: 표만 부분 갱신 (전체 재렌더 시 한글 조합이 끊기는 버그 방지)
   el.querySelector("#item-search").addEventListener("input", (e) => {
     itemSearch = e.target.value;
-    renderApp();
-    const s = document.getElementById("item-search");
-    s.focus(); s.setSelectionRange(s.value.length, s.value.length);
+    const list2 = computeItemList();
+    el.querySelector("#item-count").textContent = itemSummaryText(list2);
+    el.querySelector("#item-card").innerHTML = itemTableHTML(list2);
+    bindItemRows(el.querySelector("#item-card"));
   });
   el.querySelector("#btn-add-item").addEventListener("click", () => itemForm(null));
   el.querySelector("#btn-adjust").addEventListener("click", () => adjustmentForm());
@@ -60,14 +87,7 @@ function renderInventory(el) {
     if (e.target.files.length) importItemsFile(e.target.files[0]);
     e.target.value = "";
   });
-  el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => itemForm(b.getAttribute("data-edit"))));
-  el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deleteItem(b.getAttribute("data-del"))));
-  el.querySelectorAll("[data-hist]").forEach((a) => a.addEventListener("click", (e) => {
-    e.preventDefault();
-    itemHistoryId = a.getAttribute("data-hist");
-    renderApp();
-    setTimeout(() => { const d = document.getElementById("item-history"); if (d) d.scrollIntoView({ behavior: "smooth" }); }, 50);
-  }));
+  bindItemRows(el.querySelector("#item-card"));
 
   if (itemHistoryId) {
     const item = getItem(itemHistoryId);

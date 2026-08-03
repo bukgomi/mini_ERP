@@ -12,11 +12,7 @@ let receiptSearch = "";
 let lastReceiptInput = null;  // 직전 입력값 기억 (빠른 연속 입력용)
 
 function renderReceipts(el) {
-  const list = state.receipts
-    .filter((r) => !receiptFilterMonth || yearMonthOf(r.date) === receiptFilterMonth)
-    .filter((r) => !receiptFilterType || r.evidenceType === receiptFilterType)
-    .filter((r) => !receiptSearch || (r.vendor || "").toLowerCase().includes(receiptSearch.toLowerCase()))
-    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const list = computeReceiptList();
 
   // 증빙 없는 경비 (누락 점검)
   const missingExpenses = state.expenses.filter((e) =>
@@ -44,23 +40,10 @@ function renderReceipts(el) {
     '<select id="rc-type"><option value="">모든 유형</option>' +
     EVIDENCE_TYPES.map((t) => "<option" + (receiptFilterType === t ? " selected" : "") + ">" + t + "</option>").join("") + "</select>" +
     '<input type="text" id="rc-search" placeholder="상호 검색" value="' + esc(receiptSearch) + '" style="width:160px">' +
-    '<span class="sub">' + list.length + "건 · 합계 " + fmtMoney(sum(list, (r) => r.amount)) + "원</span></div>" +
+    '<span class="sub" id="rc-count">' + list.length + "건 · 합계 " + fmtMoney(sum(list, (r) => r.amount)) + "원</span></div>" +
 
     // 목록
-    '<div class="card"><div class="table-wrap"><table class="grid">' +
-    '<thead><tr><th>날짜</th><th>상호</th><th class="num">금액</th><th class="num">부가세</th><th>유형</th><th>분류</th><th>파일</th><th>연결</th><th></th></tr></thead><tbody>' +
-    (list.length ? list.map((r) => {
-      const linked = r.linkedTo && r.linkedTo.kind !== "none" && r.linkedTo.id;
-      return "<tr><td>" + esc(r.date) + "</td><td><b>" + esc(r.vendor) + "</b></td>" +
-        '<td class="num">' + fmtMoney(r.amount) + '</td><td class="num">' + fmtMoney(r.vat) + "</td>" +
-        '<td><span class="badge blue">' + esc(r.evidenceType) + "</span></td>" +
-        "<td>" + esc(r.category || "") + "</td>" +
-        "<td>" + (r.filePath ? '<a href="#" data-view-file="' + esc(r.filePath) + '">' + esc(r.filePath.split("/").pop()) + "</a>" : '<span class="sub">없음</span>') + "</td>" +
-        "<td>" + (linked ? '<span class="badge green">' + ({ expense: "경비", purchase: "매입", sale: "매출" }[r.linkedTo.kind] || "") + "</span>" : "") + "</td>" +
-        '<td class="actions"><button class="btn btn-sm" data-rc-edit="' + r.id + '">수정</button> ' +
-        '<button class="btn btn-sm" data-rc-del="' + r.id + '">삭제</button></td></tr>';
-    }).join("") : '<tr><td colspan="9"><div class="empty-msg">등록된 증빙이 없습니다.</div></td></tr>') +
-    "</tbody></table></div></div>" +
+    '<div class="card" id="rc-card">' + receiptTableHTML(list) + "</div>" +
 
     // 증빙 없는 경비 (누락 점검)
     '<div class="card"><h3>⚠️ 증빙 없는 경비 <span class="sub">누락 점검용 — ' + missingExpenses.length + "건</span></h3>" +
@@ -77,20 +60,18 @@ function renderReceipts(el) {
   // ---- 이벤트 ----
   el.querySelector("#rc-month").addEventListener("change", (e) => { receiptFilterMonth = e.target.value; renderApp(); });
   el.querySelector("#rc-type").addEventListener("change", (e) => { receiptFilterType = e.target.value; renderApp(); });
+  // 검색: 표만 부분 갱신 (전체 재렌더 시 한글 조합이 끊기는 버그 방지)
   el.querySelector("#rc-search").addEventListener("input", (e) => {
-    receiptSearch = e.target.value; renderApp();
-    const s = document.getElementById("rc-search");
-    s.focus(); s.setSelectionRange(s.value.length, s.value.length);
+    receiptSearch = e.target.value;
+    const list2 = computeReceiptList();
+    el.querySelector("#rc-count").textContent = list2.length + "건 · 합계 " + fmtMoney(sum(list2, (r) => r.amount)) + "원";
+    el.querySelector("#rc-card").innerHTML = receiptTableHTML(list2);
+    bindReceiptRows(el.querySelector("#rc-card"));
   });
   el.querySelector("#btn-upload-receipt").addEventListener("click", () => receiptUploadForm(null));
   el.querySelector("#btn-tax-package").addEventListener("click", taxPackageForm);
-  el.querySelectorAll("[data-rc-edit]").forEach((b) => b.addEventListener("click", () => receiptEditForm(b.getAttribute("data-rc-edit"))));
-  el.querySelectorAll("[data-rc-del]").forEach((b) => b.addEventListener("click", () => deleteReceipt(b.getAttribute("data-rc-del"))));
+  bindReceiptRows(el.querySelector("#rc-card"));
   el.querySelectorAll("[data-rc-attach]").forEach((b) => b.addEventListener("click", () => receiptUploadForm({ kind: "expense", id: b.getAttribute("data-rc-attach") })));
-  el.querySelectorAll("[data-view-file]").forEach((a) => a.addEventListener("click", async (e) => {
-    e.preventDefault();
-    await viewReceiptFile(a.getAttribute("data-view-file"));
-  }));
 
   // 드래그&드롭
   const dz = el.querySelector("#drop-zone");
@@ -102,6 +83,43 @@ function renderReceipts(el) {
     const file = e.dataTransfer.files && e.dataTransfer.files[0];
     if (file) receiptUploadForm(null, file);
   });
+}
+
+/** 필터·검색 조건으로 증빙 목록 계산 */
+function computeReceiptList() {
+  return state.receipts
+    .filter((r) => !receiptFilterMonth || yearMonthOf(r.date) === receiptFilterMonth)
+    .filter((r) => !receiptFilterType || r.evidenceType === receiptFilterType)
+    .filter((r) => !receiptSearch || (r.vendor || "").toLowerCase().includes(receiptSearch.toLowerCase()))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+
+/** 증빙 목록 표 HTML */
+function receiptTableHTML(list) {
+  return '<div class="table-wrap"><table class="grid">' +
+    '<thead><tr><th>날짜</th><th>상호</th><th class="num">금액</th><th class="num">부가세</th><th>유형</th><th>분류</th><th>파일</th><th>연결</th><th></th></tr></thead><tbody>' +
+    (list.length ? list.map((r) => {
+      const linked = r.linkedTo && r.linkedTo.kind !== "none" && r.linkedTo.id;
+      return "<tr><td>" + esc(r.date) + "</td><td><b>" + esc(r.vendor) + "</b></td>" +
+        '<td class="num">' + fmtMoney(r.amount) + '</td><td class="num">' + fmtMoney(r.vat) + "</td>" +
+        '<td><span class="badge blue">' + esc(r.evidenceType) + "</span></td>" +
+        "<td>" + esc(r.category || "") + "</td>" +
+        "<td>" + (r.filePath ? '<a href="#" data-view-file="' + esc(r.filePath) + '">' + esc(r.filePath.split("/").pop()) + "</a>" : '<span class="sub">없음</span>') + "</td>" +
+        "<td>" + (linked ? '<span class="badge green">' + ({ expense: "경비", purchase: "매입", sale: "매출" }[r.linkedTo.kind] || "") + "</span>" : "") + "</td>" +
+        '<td class="actions"><button class="btn btn-sm" data-rc-edit="' + r.id + '">수정</button> ' +
+        '<button class="btn btn-sm" data-rc-del="' + r.id + '">삭제</button></td></tr>';
+    }).join("") : '<tr><td colspan="9"><div class="empty-msg">등록된 증빙이 없습니다.</div></td></tr>') +
+    "</tbody></table></div>";
+}
+
+/** 행 이벤트 바인딩 (부분 갱신 후 재사용) */
+function bindReceiptRows(scope) {
+  scope.querySelectorAll("[data-rc-edit]").forEach((b) => b.addEventListener("click", () => receiptEditForm(b.getAttribute("data-rc-edit"))));
+  scope.querySelectorAll("[data-rc-del]").forEach((b) => b.addEventListener("click", () => deleteReceipt(b.getAttribute("data-rc-del"))));
+  scope.querySelectorAll("[data-view-file]").forEach((a) => a.addEventListener("click", async (e) => {
+    e.preventDefault();
+    await viewReceiptFile(a.getAttribute("data-view-file"));
+  }));
 }
 
 /** 증빙 원본 보기 — 폴더에서 읽어 createObjectURL로 새 창 표시 */

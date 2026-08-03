@@ -26,18 +26,54 @@ const TRADE_CFG = {
 function renderSales(el) { renderTradeList("sales", el); }
 
 /* ---------- 공용: 목록 렌더 ---------- */
-function renderTradeList(kind, el) {
+
+/** 현재 필터 조건으로 목록 계산 */
+function computeTradeList(kind) {
   const cfg = TRADE_CFG[kind];
   const f = tradeFilter[kind];
   const q = f.search.trim().toLowerCase();
-
-  const list = state[cfg.listKey]
+  return state[cfg.listKey]
     .filter((r) => inRange(r.date, f.from, f.to))
     .filter((r) => !f.partnerId || r.partnerId === f.partnerId)
     .filter((r) => !q || partnerName(r.partnerId).toLowerCase().includes(q) ||
       (r.lines || []).some((l) => (l.name || "").toLowerCase().includes(q)) ||
       (r.memo || "").toLowerCase().includes(q))
     .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/** 필터 바 요약 텍스트 */
+function tradeSummaryText(kind, list) {
+  const cfg = TRADE_CFG[kind];
+  return list.length + "건 · 합계 " + fmtMoney(sum(list, (r) => r.total)) + "원 · " +
+    cfg.unpaidLabel + " " + fmtMoney(sum(list, (r) => unpaidAmount(r))) + "원";
+}
+
+/** 목록 표 HTML */
+function tradeTableHTML(kind, list) {
+  const cfg = TRADE_CFG[kind];
+  return '<div class="table-wrap"><table class="grid">' +
+    "<thead><tr><th>날짜</th><th>거래처</th><th>품목</th>" +
+    '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th>' +
+    '<th class="num">' + cfg.unpaidLabel + "</th><th>결제</th><th>상태</th><th></th></tr></thead><tbody>" +
+    (list.length ? list.map((r) => tradeRowHTML(kind, r)).join("")
+      : '<tr><td colspan="10"><div class="empty-msg">기간 내 ' + cfg.label + " 기록이 없습니다.</div></td></tr>") +
+    "</tbody></table></div>";
+}
+
+/** 행 버튼(수금/명세서/배송/수정/삭제/상태) 바인딩 — 부분 갱신 후에도 재사용 */
+function bindTradeRows(el, kind) {
+  el.querySelectorAll("[data-t-edit]").forEach((b) => b.addEventListener("click", () => tradeForm(kind, b.getAttribute("data-t-edit"))));
+  el.querySelectorAll("[data-t-del]").forEach((b) => b.addEventListener("click", () => deleteTrade(kind, b.getAttribute("data-t-del"))));
+  el.querySelectorAll("[data-t-status]").forEach((b) => b.addEventListener("click", () => cycleTradeStatus(kind, b.getAttribute("data-t-status"))));
+  el.querySelectorAll("[data-t-pay]").forEach((b) => b.addEventListener("click", () => paymentForm(kind, b.getAttribute("data-t-pay"))));
+  el.querySelectorAll("[data-t-ship]").forEach((b) => b.addEventListener("click", () => createShipmentFromSale(b.getAttribute("data-t-ship"))));
+  el.querySelectorAll("[data-t-doc]").forEach((b) => b.addEventListener("click", () => openStatementForSale(b.getAttribute("data-t-doc"))));
+}
+
+function renderTradeList(kind, el) {
+  const cfg = TRADE_CFG[kind];
+  const f = tradeFilter[kind];
+  const list = computeTradeList(kind);
 
   const icon = kind === "sales" ? "💰" : "📦";
   el.innerHTML =
@@ -61,16 +97,9 @@ function renderTradeList(kind, el) {
     state.partners.map((p) => '<option value="' + p.id + '"' + (f.partnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
     "</select>" +
     '<input type="text" id="tf-search" placeholder="검색" value="' + esc(f.search) + '" style="width:160px">' +
-    '<span class="sub">' + list.length + "건 · 합계 " + fmtMoney(sum(list, (r) => r.total)) + "원 · " +
-    cfg.unpaidLabel + " " + fmtMoney(sum(list, (r) => unpaidAmount(r))) + "원</span></div>" +
+    '<span class="sub" id="tf-count">' + tradeSummaryText(kind, list) + "</span></div>" +
 
-    '<div class="card"><div class="table-wrap"><table class="grid">' +
-    "<thead><tr><th>날짜</th><th>거래처</th><th>품목</th>" +
-    '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th>' +
-    '<th class="num">' + cfg.unpaidLabel + "</th><th>결제</th><th>상태</th><th></th></tr></thead><tbody>" +
-    (list.length ? list.map((r) => tradeRowHTML(kind, r)).join("")
-      : '<tr><td colspan="10"><div class="empty-msg">기간 내 ' + cfg.label + " 기록이 없습니다.</div></td></tr>") +
-    "</tbody></table></div></div>";
+    '<div class="card" id="trade-card">' + tradeTableHTML(kind, list) + "</div>";
 
   // 필터 이벤트
   el.querySelector("#tf-from").addEventListener("change", (e) => { f.from = e.target.value; renderApp(); });
@@ -96,25 +125,24 @@ function renderTradeList(kind, el) {
     renderApp();
   }));
   el.querySelector("#tf-partner").addEventListener("change", (e) => { f.partnerId = e.target.value; renderApp(); });
+  // 검색: 화면 전체를 다시 그리지 않고 표만 부분 갱신
+  // (전체 재렌더 시 입력칸이 새로 만들어져 한글 조합(IME)이 끊기는 버그 방지)
   el.querySelector("#tf-search").addEventListener("input", (e) => {
-    f.search = e.target.value; renderApp();
-    const s = document.getElementById("tf-search");
-    s.focus(); s.setSelectionRange(s.value.length, s.value.length);
+    f.search = e.target.value;
+    const list2 = computeTradeList(kind);
+    el.querySelector("#tf-count").textContent = tradeSummaryText(kind, list2);
+    el.querySelector("#trade-card").innerHTML = tradeTableHTML(kind, list2);
+    bindTradeRows(el.querySelector("#trade-card"), kind);
   });
 
   el.querySelector("#btn-add-trade").addEventListener("click", () => tradeForm(kind, null));
   el.querySelector("#btn-trade-template").addEventListener("click", () => downloadTradeTemplate(kind));
-  el.querySelector("#btn-trade-xlsx").addEventListener("click", () => exportTradesXlsx(kind, list));
+  el.querySelector("#btn-trade-xlsx").addEventListener("click", () => exportTradesXlsx(kind, computeTradeList(kind)));
   el.querySelector("#trade-import").addEventListener("change", (e) => {
     if (e.target.files.length) importTradesFile(kind, e.target.files[0]);
     e.target.value = "";
   });
-  el.querySelectorAll("[data-t-edit]").forEach((b) => b.addEventListener("click", () => tradeForm(kind, b.getAttribute("data-t-edit"))));
-  el.querySelectorAll("[data-t-del]").forEach((b) => b.addEventListener("click", () => deleteTrade(kind, b.getAttribute("data-t-del"))));
-  el.querySelectorAll("[data-t-status]").forEach((b) => b.addEventListener("click", () => cycleTradeStatus(kind, b.getAttribute("data-t-status"))));
-  el.querySelectorAll("[data-t-pay]").forEach((b) => b.addEventListener("click", () => paymentForm(kind, b.getAttribute("data-t-pay"))));
-  el.querySelectorAll("[data-t-ship]").forEach((b) => b.addEventListener("click", () => createShipmentFromSale(b.getAttribute("data-t-ship"))));
-  el.querySelectorAll("[data-t-doc]").forEach((b) => b.addEventListener("click", () => openStatementForSale(b.getAttribute("data-t-doc"))));
+  bindTradeRows(el, kind);
 }
 
 /** 목록 한 행 HTML */

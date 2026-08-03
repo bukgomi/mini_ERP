@@ -19,11 +19,7 @@ let shipFilterTab = "전체"; // 상태 필터 탭
 let shipSearch = "";
 
 function renderShipping(el) {
-  const q = shipSearch.trim().toLowerCase();
-  const list = state.shipments
-    .filter((sh) => shipFilterTab === "전체" || sh.status === shipFilterTab)
-    .filter((sh) => !q || (sh.receiver || "").toLowerCase().includes(q) || (sh.trackingNo || "").toLowerCase().includes(q))
-    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const list = computeShipList();
 
   // 상태별 건수 (탭 표시용)
   const countBy = {};
@@ -44,7 +40,37 @@ function renderShipping(el) {
     '<div class="filter-bar">' +
     '<input type="text" id="ship-search" placeholder="수령인·송장번호 검색" value="' + esc(shipSearch) + '" style="width:220px"></div>' +
 
-    '<div class="card"><div class="table-wrap"><table class="grid">' +
+    '<div class="card" id="ship-card">' + shipTableHTML(list) + "</div>";
+
+  el.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
+    shipFilterTab = b.getAttribute("data-tab"); renderApp();
+  }));
+  // 검색: 표만 부분 갱신 (전체 재렌더 시 한글 조합이 끊기는 버그 방지)
+  el.querySelector("#ship-search").addEventListener("input", (e) => {
+    shipSearch = e.target.value;
+    el.querySelector("#ship-card").innerHTML = shipTableHTML(computeShipList());
+    bindShipRows(el.querySelector("#ship-card"));
+  });
+  el.querySelector("#btn-add-ship").addEventListener("click", () => shipmentForm(null, null));
+  el.querySelector("#ship-import").addEventListener("change", (e) => {
+    if (e.target.files.length) importShipmentsFile(e.target.files[0]);
+    e.target.value = "";
+  });
+  bindShipRows(el.querySelector("#ship-card"));
+}
+
+/** 검색·탭 조건으로 배송 목록 계산 */
+function computeShipList() {
+  const q = shipSearch.trim().toLowerCase();
+  return state.shipments
+    .filter((sh) => shipFilterTab === "전체" || sh.status === shipFilterTab)
+    .filter((sh) => !q || (sh.receiver || "").toLowerCase().includes(q) || (sh.trackingNo || "").toLowerCase().includes(q))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+
+/** 배송 목록 표 HTML */
+function shipTableHTML(list) {
+  return '<div class="table-wrap"><table class="grid">' +
     "<thead><tr><th>날짜</th><th>수령인</th><th>연락처</th><th>주소</th><th>매출 건</th>" +
     "<th>택배사</th><th>송장번호</th><th>상태</th><th></th></tr></thead><tbody>" +
     (list.length ? list.map((sh) => {
@@ -69,24 +95,14 @@ function renderShipping(el) {
         '<button class="btn btn-sm" data-sh-edit="' + sh.id + '">수정</button> ' +
         '<button class="btn btn-sm" data-sh-del="' + sh.id + '">삭제</button></td></tr>';
     }).join("") : '<tr><td colspan="9"><div class="empty-msg">배송 건이 없습니다. 매출 목록의 [배송] 버튼 또는 [+ 배송 등록]으로 만드세요.</div></td></tr>') +
-    "</tbody></table></div></div>";
+    "</tbody></table></div>";
+}
 
-  el.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
-    shipFilterTab = b.getAttribute("data-tab"); renderApp();
-  }));
-  el.querySelector("#ship-search").addEventListener("input", (e) => {
-    shipSearch = e.target.value; renderApp();
-    const s = document.getElementById("ship-search");
-    s.focus(); s.setSelectionRange(s.value.length, s.value.length);
-  });
-  el.querySelector("#btn-add-ship").addEventListener("click", () => shipmentForm(null, null));
-  el.querySelector("#ship-import").addEventListener("change", (e) => {
-    if (e.target.files.length) importShipmentsFile(e.target.files[0]);
-    e.target.value = "";
-  });
-  el.querySelectorAll("[data-sh-next]").forEach((b) => b.addEventListener("click", () => advanceShipment(b.getAttribute("data-sh-next"))));
-  el.querySelectorAll("[data-sh-edit]").forEach((b) => b.addEventListener("click", () => shipmentForm(b.getAttribute("data-sh-edit"), null)));
-  el.querySelectorAll("[data-sh-del]").forEach((b) => b.addEventListener("click", () => deleteShipment(b.getAttribute("data-sh-del"))));
+/** 행 이벤트 바인딩 (부분 갱신 후 재사용) */
+function bindShipRows(scope) {
+  scope.querySelectorAll("[data-sh-next]").forEach((b) => b.addEventListener("click", () => advanceShipment(b.getAttribute("data-sh-next"))));
+  scope.querySelectorAll("[data-sh-edit]").forEach((b) => b.addEventListener("click", () => shipmentForm(b.getAttribute("data-sh-edit"), null)));
+  scope.querySelectorAll("[data-sh-del]").forEach((b) => b.addEventListener("click", () => deleteShipment(b.getAttribute("data-sh-del"))));
 }
 
 function shipBadge(status) {

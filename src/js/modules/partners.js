@@ -6,25 +6,16 @@
 let partnerSearch = "";       // 검색어 (화면 유지용)
 let partnerDetailId = null;   // 상세 보기 중인 거래처
 
-function renderPartners(el) {
+/** 검색어로 거래처 목록 계산 */
+function computePartnerList() {
   const q = partnerSearch.trim().toLowerCase();
-  const list = state.partners.filter((p) =>
-    !q || (p.name || "").toLowerCase().includes(q) || (p.bizNumber || "").includes(q) || (p.ceo || "").toLowerCase().includes(q)
-  );
+  return state.partners.filter((p) =>
+    !q || (p.name || "").toLowerCase().includes(q) || (p.bizNumber || "").includes(q) || (p.ceo || "").toLowerCase().includes(q));
+}
 
-  el.innerHTML =
-    '<div class="page-title">🏢 거래처 관리' +
-    '<span class="spacer"></span>' +
-    '<button class="btn" id="btn-partner-template">📄 엑셀 양식 받기</button>' +
-    '<label class="btn">📥 엑셀 업로드<input type="file" id="partner-import" accept=".xlsx,.csv" style="display:none"></label>' +
-    '<button class="btn" id="btn-partner-xlsx">📤 엑셀 다운로드</button>' +
-    '<button class="btn btn-primary" id="btn-add-partner">+ 거래처 등록</button></div>' +
-
-    '<div class="filter-bar">' +
-    '<input type="text" id="partner-search" placeholder="상호·사업자번호·대표자 검색" value="' + esc(partnerSearch) + '" style="width:260px">' +
-    '<span class="sub">' + list.length + "곳</span></div>" +
-
-    '<div class="card"><div class="table-wrap"><table class="grid">' +
+/** 거래처 목록 표 HTML */
+function partnerTableHTML(list) {
+  return '<div class="table-wrap"><table class="grid">' +
     "<thead><tr><th>상호</th><th>구분</th><th>사업자번호</th><th>대표자</th><th>연락처</th>" +
     '<th class="num">기초이월</th><th class="num">미수금 잔액</th><th></th></tr></thead><tbody>' +
     (list.length ? list.map((p) => {
@@ -41,16 +32,46 @@ function renderPartners(el) {
         '<button class="btn btn-sm" data-edit="' + p.id + '">수정</button> ' +
         '<button class="btn btn-sm" data-del="' + p.id + '">삭제</button></td></tr>';
     }).join("") : '<tr><td colspan="8"><div class="empty-msg">등록된 거래처가 없습니다. 오른쪽 위 [+ 거래처 등록]을 눌러 시작하세요.</div></td></tr>') +
-    "</tbody></table></div></div>" +
+    "</tbody></table></div>";
+}
+
+/** 행 이벤트 바인딩 (부분 갱신 후 재사용) */
+function bindPartnerRows(scope) {
+  scope.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => partnerForm(b.getAttribute("data-edit"))));
+  scope.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deletePartner(b.getAttribute("data-del"))));
+  scope.querySelectorAll("[data-detail]").forEach((a) => a.addEventListener("click", (e) => {
+    e.preventDefault();
+    partnerDetailId = a.getAttribute("data-detail");
+    renderApp();
+    setTimeout(() => { const d = document.getElementById("partner-detail"); if (d) d.scrollIntoView({ behavior: "smooth" }); }, 50);
+  }));
+}
+
+function renderPartners(el) {
+  const list = computePartnerList();
+
+  el.innerHTML =
+    '<div class="page-title">🏢 거래처 관리' +
+    '<span class="spacer"></span>' +
+    '<button class="btn" id="btn-partner-template">📄 엑셀 양식 받기</button>' +
+    '<label class="btn">📥 엑셀 업로드<input type="file" id="partner-import" accept=".xlsx,.csv" style="display:none"></label>' +
+    '<button class="btn" id="btn-partner-xlsx">📤 엑셀 다운로드</button>' +
+    '<button class="btn btn-primary" id="btn-add-partner">+ 거래처 등록</button></div>' +
+
+    '<div class="filter-bar">' +
+    '<input type="text" id="partner-search" placeholder="상호·사업자번호·대표자 검색" value="' + esc(partnerSearch) + '" style="width:260px">' +
+    '<span class="sub" id="partner-count">' + list.length + "곳</span></div>" +
+
+    '<div class="card" id="partner-card">' + partnerTableHTML(list) + "</div>" +
     '<div id="partner-detail"></div>';
 
-  // 검색
+  // 검색: 표만 부분 갱신 (전체 재렌더 시 한글 조합이 끊기는 버그 방지)
   el.querySelector("#partner-search").addEventListener("input", (e) => {
     partnerSearch = e.target.value;
-    renderApp();
-    // 검색창 포커스 유지
-    const s = document.getElementById("partner-search");
-    s.focus(); s.setSelectionRange(s.value.length, s.value.length);
+    const list2 = computePartnerList();
+    el.querySelector("#partner-count").textContent = list2.length + "곳";
+    el.querySelector("#partner-card").innerHTML = partnerTableHTML(list2);
+    bindPartnerRows(el.querySelector("#partner-card"));
   });
 
   el.querySelector("#btn-add-partner").addEventListener("click", () => partnerForm(null));
@@ -60,15 +81,7 @@ function renderPartners(el) {
     if (e.target.files.length) importPartnersFile(e.target.files[0]);
     e.target.value = ""; // 같은 파일 재선택 가능하도록 초기화
   });
-  el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => partnerForm(b.getAttribute("data-edit"))));
-  el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deletePartner(b.getAttribute("data-del"))));
-  el.querySelectorAll("[data-detail]").forEach((a) => a.addEventListener("click", (e) => {
-    e.preventDefault();
-    partnerDetailId = a.getAttribute("data-detail");
-    renderApp();
-    // 상세 카드로 스크롤
-    setTimeout(() => { const d = document.getElementById("partner-detail"); if (d) d.scrollIntoView({ behavior: "smooth" }); }, 50);
-  }));
+  bindPartnerRows(el.querySelector("#partner-card"));
 
   // 상세(거래 이력 요약)
   if (partnerDetailId) {
