@@ -34,7 +34,8 @@ function defaultState() {
     fiscalYear: new Date().getFullYear(),
     seq: { quote: 1, statement: 1 },
     closedYears: [],   // 마감된 연도 목록 [{ year, closedAt, archiveFile }]
-    moduleOrder: []    // 메뉴 순서 (빈 배열 = 기본 순서). 설정에서 ↑↓로 변경
+    moduleOrder: [],   // 메뉴 순서 (빈 배열 = 기본 순서). 설정에서 ↑↓로 변경
+    useWholesale: false // 소매가·도매가 구분 사용 (도매 거래 회사용, 설정에서 켬)
   };
 }
 
@@ -70,6 +71,16 @@ function migrateState(raw) {
 }
 
 /* ---------- 조회 헬퍼 ---------- */
+
+/**
+ * 문서·매출에 적용할 판매 단가
+ * 도매 모드 켬: 도매가 우선 (없으면 소매가) / 끔: 판매가(=salePrice) 그대로
+ */
+function sellPriceOf(item) {
+  if (!item) return 0;
+  if (state.useWholesale) return Number(item.wholesalePrice) || Number(item.salePrice) || 0;
+  return Number(item.salePrice) || 0;
+}
 
 function getPartner(id) { return state.partners.find((p) => p.id === id) || null; }
 function getItem(id) { return state.items.find((i) => i.id === id) || null; }

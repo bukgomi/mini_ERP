@@ -18,11 +18,14 @@ function itemSummaryText(list) {
     fmtMoney(sum(list, (i) => currentStock(i.id) * (Number(i.costPrice) || 0))) + "원";
 }
 
-/** 재고 현황 표 HTML */
+/** 재고 현황 표 HTML — 도매 모드면 소매가|도매가|매입가 3단 */
 function itemTableHTML(list) {
+  const w = state.useWholesale;
   return '<div class="table-wrap"><table class="grid">' +
     "<thead><tr><th>품목코드</th><th>품명</th><th>규격</th><th>단위</th>" +
-    '<th class="num">판매가</th><th class="num">매입가</th>' +
+    '<th class="num">' + (w ? "소매가" : "판매가") + "</th>" +
+    (w ? '<th class="num">도매가</th>' : "") +
+    '<th class="num">매입가</th>' +
     '<th class="num">현재고</th><th class="num">안전재고</th><th>상태</th><th class="num">재고 금액</th><th></th></tr></thead><tbody>' +
     (list.length ? list.map((i) => {
       const stock = currentStock(i.id);
@@ -30,13 +33,15 @@ function itemTableHTML(list) {
         "<td>" + esc(i.code) + "</td>" +
         '<td><a href="#" data-hist="' + i.id + '"><b>' + esc(i.name) + "</b></a></td>" +
         "<td>" + esc(i.spec) + "</td><td>" + esc(i.unit) + "</td>" +
-        '<td class="num">' + fmtMoney(i.salePrice) + '</td><td class="num">' + fmtMoney(i.costPrice) + "</td>" +
+        '<td class="num">' + fmtMoney(i.salePrice) + "</td>" +
+        (w ? '<td class="num"><b>' + fmtMoney(i.wholesalePrice || 0) + "</b></td>" : "") +
+        '<td class="num">' + fmtMoney(i.costPrice) + "</td>" +
         '<td class="num"><b>' + fmtMoney(stock) + '</b></td><td class="num">' + fmtMoney(i.safeStock) + "</td>" +
         "<td>" + stockBadge(stock, i.safeStock) + "</td>" +
         '<td class="num">' + fmtMoney(stock * (Number(i.costPrice) || 0)) + "</td>" +
         '<td class="actions"><button class="btn btn-sm" data-edit="' + i.id + '">수정</button> ' +
         '<button class="btn btn-sm" data-del="' + i.id + '">삭제</button></td></tr>';
-    }).join("") : '<tr><td colspan="11"><div class="empty-msg">등록된 품목이 없습니다.</div></td></tr>') +
+    }).join("") : '<tr><td colspan="' + (state.useWholesale ? 12 : 11) + '"><div class="empty-msg">등록된 품목이 없습니다.</div></td></tr>') +
     "</tbody></table></div>";
 }
 
@@ -161,7 +166,8 @@ const ITEM_XLSX_COLS = [
   ["품명", "name", ["품목명", "상품명"]],
   ["규격", "spec", []],
   ["단위", "unit", []],
-  ["판매가", "salePrice", ["판매단가"]],
+  ["판매가", "salePrice", ["판매단가", "소매가"]],
+  ["도매가", "wholesalePrice", ["도매단가"]],
   ["매입가", "costPrice", ["매입단가", "원가"]],
   ["기초재고", "baseStock", ["재고", "현재고"]],   // 도입 시 현재 수량을 기초재고로
   ["안전재고", "safeStock", []],
@@ -172,7 +178,7 @@ const ITEM_XLSX_COLS = [
 function downloadItemTemplate() {
   downloadXlsx("품목_업로드양식.xlsx", [
     ITEM_XLSX_COLS.map((c) => c[0]),
-    ["SKU-001", "예시 부품", "10x20mm", "개", 15000, 9000, 50, 20, "예시 줄 — 지우고 실제 데이터를 입력하세요"]
+    ["SKU-001", "예시 부품", "10x20mm", "개", 15000, 12000, 9000, 50, 20, "예시 줄 — 지우고 실제 데이터를 입력하세요"]
   ], "품목");
   toast("양식을 내려받았습니다. 예시 줄은 지우고 입력하세요.", "success");
 }
@@ -183,7 +189,7 @@ function exportItemsXlsx() {
   const rows = state.items.map((i) => {
     const stock = currentStock(i.id);
     return [i.code || "", i.name || "", i.spec || "", i.unit || "",
-      Number(i.salePrice) || 0, Number(i.costPrice) || 0,
+      Number(i.salePrice) || 0, Number(i.wholesalePrice) || 0, Number(i.costPrice) || 0,
       Number(i.baseStock) || 0, Number(i.safeStock) || 0, i.memo || "",
       stock, stock * (Number(i.costPrice) || 0)];
   });
@@ -222,7 +228,7 @@ async function importItemsFile(file) {
     }
     const data = {
       code: get("code"), name, spec: get("spec"), unit: get("unit") || "개",
-      salePrice: getNum("salePrice"), costPrice: getNum("costPrice"),
+      salePrice: getNum("salePrice"), wholesalePrice: getNum("wholesalePrice"), costPrice: getNum("costPrice"),
       baseStock: getNum("baseStock"), safeStock: getNum("safeStock"),
       memo: get("memo")
     };
@@ -302,8 +308,9 @@ async function importItemsFile(file) {
 /** 품목 등록/수정 폼 */
 function itemForm(id) {
   if (guardReadOnly()) return;
-  const i = id ? getItem(id) : { code: "", name: "", spec: "", unit: "개", salePrice: 0, costPrice: 0, baseStock: 0, safeStock: 0, memo: "" };
+  const i = id ? getItem(id) : { code: "", name: "", spec: "", unit: "개", salePrice: 0, wholesalePrice: 0, costPrice: 0, baseStock: 0, safeStock: 0, memo: "" };
   if (!i) return;
+  const w = state.useWholesale;
 
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
@@ -314,7 +321,8 @@ function itemForm(id) {
     '<div class="form-field"><label>품명 *</label><input type="text" id="if-name" value="' + esc(i.name) + '"></div>' +
     '<div class="form-field"><label>규격</label><input type="text" id="if-spec" value="' + esc(i.spec) + '"></div>' +
     '<div class="form-field"><label>단위</label><input type="text" id="if-unit" value="' + esc(i.unit) + '" placeholder="개, 세트, box"></div>' +
-    '<div class="form-field"><label>판매가</label><input type="text" class="num" id="if-sale" value="' + fmtMoney(i.salePrice) + '"></div>' +
+    '<div class="form-field"><label>' + (w ? "소매가" : "판매가") + '</label><input type="text" class="num" id="if-sale" value="' + fmtMoney(i.salePrice) + '"></div>' +
+    (w ? '<div class="form-field"><label>도매가 <span class="sub">(명세서·매출 자동 단가)</span></label><input type="text" class="num" id="if-wholesale" value="' + fmtMoney(i.wholesalePrice || 0) + '"></div>' : "") +
     '<div class="form-field"><label>매입가</label><input type="text" class="num" id="if-cost" value="' + fmtMoney(i.costPrice) + '"></div>' +
     '<div class="form-field"><label>기초재고</label><input type="text" class="num" id="if-base" value="' + fmtMoney(i.baseStock) + '"></div>' +
     '<div class="form-field"><label>안전재고 (이하로 떨어지면 경고)</label><input type="text" class="num" id="if-safe" value="' + fmtMoney(i.safeStock) + '"></div>' +
@@ -336,6 +344,9 @@ function itemForm(id) {
         spec: overlay.querySelector("#if-spec").value.trim(),
         unit: overlay.querySelector("#if-unit").value.trim(),
         salePrice: parseMoney(overlay.querySelector("#if-sale").value),
+        wholesalePrice: overlay.querySelector("#if-wholesale")
+          ? parseMoney(overlay.querySelector("#if-wholesale").value)
+          : (Number(i.wholesalePrice) || 0), // 토글 꺼진 상태에선 기존 값 유지
         costPrice: parseMoney(overlay.querySelector("#if-cost").value),
         baseStock: parseMoney(overlay.querySelector("#if-base").value),
         safeStock: parseMoney(overlay.querySelector("#if-safe").value),

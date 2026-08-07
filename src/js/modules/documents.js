@@ -325,7 +325,7 @@ function documentForm(type, docId, saleId) {
         list.innerHTML = matches.map((it) =>
           '<div class="combo-item" data-ipick="' + it.id + '"><span><b>' + esc(it.name) + "</b>" +
           (it.spec ? ' <span class="ci-sub">' + esc(it.spec) + "</span>" : "") + "</span>" +
-          '<span class="ci-sub">' + fmtMoney(it.salePrice) + "원</span></div>").join("");
+          '<span class="ci-sub">' + fmtMoney(sellPriceOf(it)) + "원" + (state.useWholesale ? " (도매)" : "") + "</span></div>").join("");
         list.style.display = "block";
         // mousedown: blur보다 먼저 처리되어 클릭이 씹히지 않음
         list.querySelectorAll("[data-ipick]").forEach((item) => {
@@ -335,7 +335,7 @@ function documentForm(type, docId, saleId) {
             if (!it) return;
             lines[i].name = it.name;
             if (!lines[i].spec) lines[i].spec = it.spec || "";
-            lines[i].unitPrice = Number(it.salePrice) || 0; // 품목 선택 = 단가 자동 (VLOOKUP 동작)
+            lines[i].unitPrice = sellPriceOf(it); // 품목 선택 = 단가 자동 (도매 모드면 도매가 — VLOOKUP의 도매가 동작)
             refreshLines();
             const qtyInp = overlay.querySelector('[data-df="qty"][data-i="' + i + '"]');
             if (qtyInp) { qtyInp.focus(); qtyInp.select(); }
@@ -384,7 +384,7 @@ function documentForm(type, docId, saleId) {
         if (f === "name") {
           const item = state.items.find((it) => it.name === inp.value);
           if (item && !lines[i].unitPrice) {
-            lines[i].unitPrice = Number(item.salePrice) || 0;
+            lines[i].unitPrice = sellPriceOf(item); // 도매 모드면 도매가
             lines[i].spec = lines[i].spec || item.spec || "";
             refreshLines();
             return;

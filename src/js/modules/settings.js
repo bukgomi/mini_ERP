@@ -36,6 +36,15 @@ function renderSettings(el) {
       '" data-accent-pick="' + v + '" style="background:' + c + '" title="' + t + '"></span>').join("") +
     "</div></div></div></div>" +
 
+    // ---- 판매 단가 설정 (소매가·도매가 구분) ----
+    '<div class="card"><h3>판매 단가 설정</h3>' +
+    '<div class="module-row" style="border:none;padding:4px 0">' +
+    '<div class="mod-info"><div class="mod-name">소매가·도매가 구분 사용</div>' +
+    '<div class="mod-desc">도매 거래처에 파는 회사용. 켜면 품목에 소매가와 도매가를 따로 입력하고, ' +
+    "거래명세서·매출 입력 시 <b>도매가</b>가 자동 적용됩니다 (도매가가 비어 있으면 소매가). 매입가·재고 금액은 그대로입니다.</div></div>" +
+    '<label class="switch"><input type="checkbox" id="chk-wholesale"' + (state.useWholesale ? " checked" : "") + '><span class="slider"></span></label>' +
+    "</div></div>" +
+
     // ---- 모듈 토글 + 순서 변경 ----
     '<div class="card"><h3>모듈 켜기/끄기 · 순서 변경 <span class="sub">↑↓로 메뉴 순서를 바꿀 수 있습니다. 모듈을 꺼도 데이터는 삭제되지 않습니다.</span>' +
     '<button class="btn btn-sm" id="btn-reset-order" style="float:right">기본 순서로</button></h3>' +
@@ -125,6 +134,17 @@ function renderSettings(el) {
 
   // 백업에서 복원
   el.querySelector("#btn-restore-backup").addEventListener("click", showRestoreBackupModal);
+
+  // 소매가·도매가 구분 토글
+  el.querySelector("#chk-wholesale").addEventListener("change", (e) => {
+    if (guardReadOnly()) { e.target.checked = !e.target.checked; return; }
+    state.useWholesale = e.target.checked;
+    markDirty();
+    renderApp();
+    toast(state.useWholesale
+      ? "소매가·도매가 구분을 켰습니다. 품목·재고에서 도매가를 입력하세요."
+      : "소매가·도매가 구분을 껐습니다. (입력한 도매가는 지워지지 않습니다)", "success");
+  });
 
   // 화면 테마 (PC별 설정 — 읽기 전용 모드에서도 변경 가능)
   el.querySelector("#theme-mode").addEventListener("change", (e) => setTheme(e.target.value, null));

@@ -285,7 +285,8 @@ function tradeForm(kind, id) {
         lines[i].itemId = sel.value;
         if (item) {
           lines[i].name = item.name;
-          lines[i].unitPrice = Number(item[cfg.priceField]) || 0; // 매출=판매가, 매입=매입가 자동
+          // 매출 = 판매 단가(도매 모드면 도매가), 매입 = 매입가 자동
+          lines[i].unitPrice = kind === "sales" ? sellPriceOf(item) : (Number(item.costPrice) || 0);
         }
         refreshLines();
       });
