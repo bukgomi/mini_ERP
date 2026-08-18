@@ -60,10 +60,10 @@ function renderUnpaidOverview(el, kind) {
   el.innerHTML =
     '<div class="stat-tiles">' +
     tile(cfg.unpaidLabel + " 총액", fmtMoney(totalBal) + "원", "red", "💳") +
-    tile("30일 미만", fmtMoney(aging[0]) + "원", "") +
-    tile("30~60일", fmtMoney(aging[1]) + "원", "") +
-    tile("60~90일", fmtMoney(aging[2]) + "원", "") +
-    tile("90일 이상", fmtMoney(aging[3]) + "원", "red") +
+    tile(state.prefs.aging1 + "일 미만", fmtMoney(aging[0]) + "원", "") +
+    tile(state.prefs.aging1 + "~" + state.prefs.aging2 + "일", fmtMoney(aging[1]) + "원", "") +
+    tile(state.prefs.aging2 + "~" + state.prefs.aging3 + "일", fmtMoney(aging[2]) + "원", "") +
+    tile(state.prefs.aging3 + "일 이상", fmtMoney(aging[3]) + "원", "red") +
     "</div>" +
 
     '<div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">' +

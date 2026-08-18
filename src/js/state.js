@@ -35,7 +35,23 @@ function defaultState() {
     seq: { quote: 1, statement: 1 },
     closedYears: [],   // 마감된 연도 목록 [{ year, closedAt, archiveFile }]
     moduleOrder: [],   // 메뉴 순서 (빈 배열 = 기본 순서). 설정에서 ↑↓로 변경
-    useWholesale: false // 소매가·도매가 구분 사용 (도매 거래 회사용, 설정에서 켬)
+    useWholesale: false, // 소매가·도매가 구분 사용 (도매 거래 회사용, 설정에서 켬)
+    // 세부 옵션 (설정 → 세부 옵션에서 변경. 기본값 = 기존 고정값 그대로)
+    prefs: {
+      quotePrefix: "Q",        // 견적서 문서번호 접두사
+      stmtPrefix: "S",         // 거래명세서 문서번호 접두사
+      stmtRows: 12,            // 명세서 품목 행 수 (한 장 기준)
+      defTwoCopies: true,      // 명세서 기본: 2부 인쇄
+      defShowVat: false,       // 명세서 기본: 세액 별도 표시
+      defAutoSale: true,       // 명세서 기본: 매출 장부 자동 등록
+      printFont: "normal",     // 명세서 인쇄 글자: normal | large
+      defaultCourier: "CJ대한통운", // 배송 등록 기본 택배사
+      backupKeep: 30,          // 일별 백업 보관 개수
+      quoteFooter: "본 견적의 유효기간은 발행일로부터 30일입니다.", // 견적서 하단 문구
+      defVatExempt: false,     // 매출·매입 입력 기본: 부가세 미적용 (면세사업자용)
+      aging1: 30, aging2: 60, aging3: 90, // 미수금 연령 구간(일)
+      saleToStmt: false        // 매출 저장 후 거래명세서 바로 발행
+    }
   };
 }
 
@@ -67,6 +83,8 @@ function migrateState(raw) {
   }
   s.seq = Object.assign({ quote: 1, statement: 1 }, s.seq || {});
   if (!s.fiscalYear) s.fiscalYear = new Date().getFullYear();
+  // 세부 옵션: 구버전 파일에 없는 항목은 기본값으로 보충
+  s.prefs = Object.assign(defaultState().prefs, s.prefs || {});
   return s;
 }
 
@@ -222,13 +240,15 @@ function currentStockAsOf(itemId, cutoff) {
   return stock;
 }
 
-/** 미수금 연령(일수) 계산의 기준: 매출 건 date → 오늘 */
+/** 미수금 연령(일수) 계산의 기준: 매출 건 date → 오늘. 구간은 세부 옵션에서 변경 가능 */
 function agingBucket(dateStr) {
   const d = daysBetween(dateStr, today());
-  if (d < 30) return 0;      // 30일 미만
-  if (d < 60) return 1;      // 30~60일
-  if (d < 90) return 2;      // 60~90일
-  return 3;                  // 90일 이상
+  const p = state.prefs || {};
+  const a1 = Number(p.aging1) || 30, a2 = Number(p.aging2) || 60, a3 = Number(p.aging3) || 90;
+  if (d < a1) return 0;
+  if (d < a2) return 1;
+  if (d < a3) return 2;
+  return 3;
 }
 
 /* ---------- 현금출납부 계산 ----------

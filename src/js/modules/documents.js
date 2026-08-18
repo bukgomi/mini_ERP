@@ -81,14 +81,15 @@ function docTotal(d) {
   return stmtAmounts(d.lines, d.discountRate, d.showVat).total;
 }
 
-/** 문서번호 채번: Q-YYYYMMDD-01 / S-YYYYMMDD-01 */
+/** 문서번호 채번: {접두사}-YYYYMMDD-01 (접두사는 세부 옵션에서 변경) */
 function nextDocNo(type) {
-  const prefix = type === "quote" ? "Q" : "S";
+  const prefix = (type === "quote" ? state.prefs.quotePrefix : state.prefs.stmtPrefix) || (type === "quote" ? "Q" : "S");
   const dateStr = today().replace(/-/g, "");
-  // 같은 날짜의 기존 번호 중 최대 순번 + 1
+  // 같은 날짜의 기존 번호 중 최대 순번 + 1 (접두사에 특수문자가 있어도 안전하게)
+  const escPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   let maxSeq = 0;
   state.documents.forEach((d) => {
-    const m = (d.no || "").match(new RegExp("^" + prefix + "-" + dateStr + "-(\\d+)$"));
+    const m = (d.no || "").match(new RegExp("^" + escPrefix + "-" + dateStr + "-(\\d+)$"));
     if (m) maxSeq = Math.max(maxSeq, Number(m[1]));
   });
   return prefix + "-" + dateStr + "-" + String(maxSeq + 1).padStart(2, "0");
@@ -133,7 +134,7 @@ function documentForm(type, docId, saleId) {
     // 새 문서는 기본 5줄로 시작 (한 줄씩 추가하는 불편 제거 — 빈 줄은 저장 시 자동 제외)
     : Array.from({ length: 5 }, () => ({ name: "", spec: "", qty: 1, unitPrice: 0, note: "" }));
   let discountRate = doc ? (doc.discountRate || 0) : 0;
-  let showVat = doc ? !!doc.showVat : false; // 세액(부가세) 별도 표시 ON/OFF (명세서 전용)
+  let showVat = doc ? !!doc.showVat : !!state.prefs.defShowVat; // 세액 별도 표시 (신규는 세부 옵션 기본값)
 
   const initPartnerId = doc ? doc.partnerId : (sale ? sale.partnerId : "");
   const initDate = doc ? doc.date : today();
@@ -211,11 +212,13 @@ function documentForm(type, docId, saleId) {
       '<div class="form-field"><label>총미수잔액</label><input type="text" class="num" id="dcf-bal" value="0" readonly style="background:var(--bg);font-weight:700"></div>' +
       "</div></div></div>" +
       '<div style="margin-top:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
-      '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-two" checked style="width:auto"> 2부 인쇄 (공급자+공급받는자)</label>' +
+      '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-two"' +
+      ((doc ? doc.twoCopies !== false : state.prefs.defTwoCopies) ? " checked" : "") + ' style="width:auto"> 2부 인쇄 (공급자+공급받는자)</label>' +
       '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-vat"' + (showVat ? " checked" : "") + ' style="width:auto"> 세액(부가세) 별도 표시</label>' +
       // 직접 발행(매출 건 미연결)일 때만: 발행과 동시에 매출 장부 자동 등록
       (!doc && !sale ?
-        '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-autosale" checked style="width:auto"> 매출 장부에 자동 등록</label>' : "") +
+        '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dcf-autosale"' +
+        (state.prefs.defAutoSale ? " checked" : "") + ' style="width:auto"> 매출 장부에 자동 등록</label>' : "") +
       '<span class="sub">세액 켬 = 공급가액·세액 열 분리 / 끔 = 단가에 포함(기존 양식) · 정산 값은 발행 시점에 고정 저장</span></div>'
       : "") +
 
@@ -656,7 +659,7 @@ function quotePrintHTML(d) {
     "<tr><td colspan='5' style='text-align:right'><b>총 합계</b></td><td style='text-align:right'><b>" + fmtMoney(grand) + "</b></td></tr>" +
     "</tbody></table>" +
     (d.memo ? "<p style='margin-top:8px'>비고: " + esc(d.memo) + "</p>" : "") +
-    "<p style='margin-top:8px;font-size:11px;color:#333'>· 본 견적의 유효기간은 발행일로부터 30일입니다.</p>" +
+    (state.prefs.quoteFooter ? "<p style='margin-top:8px;font-size:11px;color:#333'>· " + esc(state.prefs.quoteFooter) + "</p>" : "") +
     "</div>";
 }
 
@@ -665,7 +668,9 @@ function quotePrintHTML(d) {
  * 12행 초과 시 여러 장으로 분할
  */
 function statementPrintHTML(d) {
-  const ROWS_PER_PAGE = 12;
+  // 행 수·글자 크기는 세부 옵션에서 변경 가능
+  const ROWS_PER_PAGE = Math.min(30, Math.max(5, Number(state.prefs.stmtRows) || 12));
+  const L = state.prefs.printFont === "large"; // 크게 모드
   const pages = [];
   for (let i = 0; i < Math.max(1, Math.ceil(d.lines.length / ROWS_PER_PAGE)); i++) {
     pages.push(d.lines.slice(i * ROWS_PER_PAGE, (i + 1) * ROWS_PER_PAGE));
@@ -675,13 +680,12 @@ function statementPrintHTML(d) {
     ".doc-stmt{font-family:'Malgun Gothic',sans-serif;color:#000}" +
     ".stmt-page{display:flex;gap:6mm;page-break-after:always;width:100%}" +
     ".stmt-page:last-child{page-break-after:auto}" +
-    // 글자 크기: 실물 인쇄 양식 수준으로 크게 (사용자 피드백)
-    ".stmt-copy{flex:1;border:1.5px solid #000;padding:3mm;font-size:12.5px}" +
+    ".stmt-copy{flex:1;border:1.5px solid #000;padding:3mm;font-size:" + (L ? "14.5px" : "12.5px") + "}" +
     ".stmt-copy table{width:100%;border-collapse:collapse;table-layout:fixed}" +
-    ".stmt-copy th,.stmt-copy td{border:1px solid #000;padding:3px 5px;font-size:12px;overflow:hidden;line-height:1.45}" +
+    ".stmt-copy th,.stmt-copy td{border:1px solid #000;padding:" + (L ? "4px 6px" : "3px 5px") + ";font-size:" + (L ? "13.5px" : "12px") + ";overflow:hidden;line-height:1.45}" +
     ".stmt-copy th{background:#efefef;text-align:center;font-weight:700}" +
-    ".stmt-title{text-align:center;font-size:21px;font-weight:700;letter-spacing:8px;margin:2px 0}" +
-    ".stmt-sub{text-align:center;font-size:13px;letter-spacing:5px;margin-bottom:5px}" +
+    ".stmt-title{text-align:center;font-size:" + (L ? "24px" : "21px") + ";font-weight:700;letter-spacing:8px;margin:2px 0}" +
+    ".stmt-sub{text-align:center;font-size:" + (L ? "15px" : "13px") + ";letter-spacing:5px;margin-bottom:5px}" +
     ".stmt-num{text-align:right;font-variant-numeric:tabular-nums}" +
     "</style>";
 
@@ -715,7 +719,8 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
       '<td class="stmt-num">' + fmtMoney(lineSupply) + "</td>" +
       "<td" + (showVat ? ' class="stmt-num">' + fmtMoney(Math.round(lineSupply * 0.1)) : ">") + "</td></tr>";
   });
-  for (let i = pageLines.length; i < 12; i++) rows += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>";
+  const rowsPerPage = Math.min(30, Math.max(5, Number(state.prefs.stmtRows) || 12));
+  for (let i = pageLines.length; i < rowsPerPage; i++) rows += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>";
 
   // 마지막 장에만 계/공제/정산 표시
   const isLast = pageIdx === pageCount - 1;
@@ -729,9 +734,9 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
     // 상단: 작성일자 + 공급받는자 / 공급자 박스
     '<table style="margin-bottom:2mm"><colgroup><col style="width:38%"><col style="width:12%"><col style="width:50%"></colgroup>' +
     "<tr><td rowspan='4' style='border:none;vertical-align:top'>" +
-    "<div style='font-size:11.5px'>작성일자: " + esc(d.date) + "</div>" +
-    "<div style='font-size:18px;font-weight:700;margin-top:5mm'>" + esc(p.name) + " 귀하</div>" +
-    "<div style='font-size:11.5px;margin-top:4mm'>아래와 같이 공급합니다.</div></td>" +
+    "<div style='font-size:" + (state.prefs.printFont === "large" ? "13px" : "11.5px") + "'>작성일자: " + esc(d.date) + "</div>" +
+    "<div style='font-size:" + (state.prefs.printFont === "large" ? "20px" : "18px") + ";font-weight:700;margin-top:5mm'>" + esc(p.name) + " 귀하</div>" +
+    "<div style='font-size:" + (state.prefs.printFont === "large" ? "13px" : "11.5px") + ";margin-top:4mm'>아래와 같이 공급합니다.</div></td>" +
     "<th>상 호</th><td>" + esc(co.name) + " <span style='float:right'>성명: " + esc(co.ceo) + "</span></td></tr>" +
     "<tr><th>사업자<br>번호</th><td>" + esc(co.bizNumber) + "</td></tr>" +
     "<tr><th>계 좌</th><td>" + esc(co.bankAccount) + "</td></tr>" +
@@ -740,7 +745,7 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
 
     // 합계(상단): 금액 + 원정 표기
     '<table style="margin-bottom:2mm"><tr><th style="width:20%">합계금액</th>' +
-    '<td style="font-size:15px"><b>' + fmtMoney(st.dayTotal) + " 원정</b></td></tr></table>" +
+    '<td style="font-size:' + (state.prefs.printFont === "large" ? "17px" : "15px") + '"><b>' + fmtMoney(st.dayTotal) + " 원정</b></td></tr></table>" +
 
     // 품목 표: 품명|규격|수량|단가|공급가액|기타(세액 표시 켜면 마지막 열이 세액)
     "<table><colgroup><col style='width:28%'><col style='width:14%'><col style='width:10%'><col style='width:14%'><col style='width:18%'><col style='width:16%'></colgroup>" +

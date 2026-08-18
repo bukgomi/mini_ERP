@@ -168,7 +168,8 @@ function shipmentForm(id, saleId) {
       saleId: saleId || "", date: today(),
       receiver: partner ? partner.name : "", phone: partner ? partner.phone : "",
       address: partner ? partner.address : "",
-      courier: "CJ대한통운", trackingNo: "", status: "상품준비", memo: ""
+      courier: state.prefs.defaultCourier || "CJ대한통운", // 기본 택배사 (세부 옵션)
+      trackingNo: "", status: "상품준비", memo: ""
     };
   }
 

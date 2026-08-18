@@ -45,6 +45,35 @@ function renderSettings(el) {
     '<label class="switch"><input type="checkbox" id="chk-wholesale"' + (state.useWholesale ? " checked" : "") + '><span class="slider"></span></label>' +
     "</div></div>" +
 
+    // ---- 세부 옵션 (기존 고정값들을 조절 — 접어두어 비전문가는 안 봐도 됨) ----
+    '<div class="card"><details><summary style="cursor:pointer;font-weight:700;font-size:14.5px">⚙️ 세부 옵션 ' +
+    '<span class="sub">문서번호·명세서 양식·인쇄 크기·백업 개수 등 (필요할 때만 여세요)</span></summary>' +
+    '<div class="form-grid" style="margin-top:14px">' +
+    '<div class="form-field"><label>견적서 번호 접두사</label><input type="text" id="pf-qprefix" value="' + esc(state.prefs.quotePrefix) + '"></div>' +
+    '<div class="form-field"><label>명세서 번호 접두사</label><input type="text" id="pf-sprefix" value="' + esc(state.prefs.stmtPrefix) + '"></div>' +
+    '<div class="form-field"><label>명세서 품목 행 수 (5~30)</label><input type="text" class="num" id="pf-rows" value="' + state.prefs.stmtRows + '"></div>' +
+    '<div class="form-field"><label>명세서 인쇄 글자</label><select id="pf-font">' +
+    '<option value="normal"' + (state.prefs.printFont !== "large" ? " selected" : "") + '>보통</option>' +
+    '<option value="large"' + (state.prefs.printFont === "large" ? " selected" : "") + '>크게</option></select></div>' +
+    '<div class="form-field"><label>기본 택배사</label><select id="pf-courier">' +
+    ["CJ대한통운", "우체국택배", "롯데택배", "한진택배", "로젠택배", "기타"].map((c) =>
+      "<option" + (state.prefs.defaultCourier === c ? " selected" : "") + ">" + c + "</option>").join("") + "</select></div>" +
+    '<div class="form-field"><label>일별 백업 보관 개수 (5~365)</label><input type="text" class="num" id="pf-backup" value="' + state.prefs.backupKeep + '"></div>' +
+    '<div class="form-field"><label>미수금 연령 구간 1 (일)</label><input type="text" class="num" id="pf-a1" value="' + state.prefs.aging1 + '"></div>' +
+    '<div class="form-field"><label>연령 구간 2 (일)</label><input type="text" class="num" id="pf-a2" value="' + state.prefs.aging2 + '"></div>' +
+    '<div class="form-field"><label>연령 구간 3 (일)</label><input type="text" class="num" id="pf-a3" value="' + state.prefs.aging3 + '"></div>' +
+    '<div class="form-field span2"><label>견적서 하단 문구 (비우면 표시 안 함)</label><input type="text" id="pf-qfooter" value="' + esc(state.prefs.quoteFooter) + '"></div>' +
+    "</div>" +
+    '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:12px">' +
+    '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-two"' + (state.prefs.defTwoCopies ? " checked" : "") + ' style="width:auto"> 명세서 기본 2부 인쇄</label>' +
+    '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-vat"' + (state.prefs.defShowVat ? " checked" : "") + ' style="width:auto"> 명세서 기본 세액 표시</label>' +
+    '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-autosale"' + (state.prefs.defAutoSale ? " checked" : "") + ' style="width:auto"> 명세서 발행 시 매출 자동 등록</label>' +
+    '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-tostmt"' + (state.prefs.saleToStmt ? " checked" : "") + ' style="width:auto"> 매출 저장 후 명세서 바로 발행</label>' +
+    '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-vatx"' + (state.prefs.defVatExempt ? " checked" : "") + ' style="width:auto"> 매출·매입 기본 부가세 미적용 (면세사업자)</label>' +
+    "</div>" +
+    '<div style="margin-top:12px"><button class="btn btn-primary" id="btn-save-prefs">세부 옵션 저장</button></div>' +
+    "</details></div>" +
+
     // ---- 모듈 토글 + 순서 변경 ----
     '<div class="card"><h3>모듈 켜기/끄기 · 순서 변경 <span class="sub">↑↓로 메뉴 순서를 바꿀 수 있습니다. 모듈을 꺼도 데이터는 삭제되지 않습니다.</span>' +
     '<button class="btn btn-sm" id="btn-reset-order" style="float:right">기본 순서로</button></h3>' +
@@ -134,6 +163,38 @@ function renderSettings(el) {
 
   // 백업에서 복원
   el.querySelector("#btn-restore-backup").addEventListener("click", showRestoreBackupModal);
+
+  // 세부 옵션 저장
+  el.querySelector("#btn-save-prefs").addEventListener("click", () => {
+    if (guardReadOnly()) return;
+    const clamp = (v, min, max, dflt) => { const n = parseMoney(v); return n >= min && n <= max ? n : dflt; };
+    state.prefs = {
+      quotePrefix: (el.querySelector("#pf-qprefix").value.trim() || "Q").slice(0, 10),
+      stmtPrefix: (el.querySelector("#pf-sprefix").value.trim() || "S").slice(0, 10),
+      stmtRows: clamp(el.querySelector("#pf-rows").value, 5, 30, 12),
+      printFont: el.querySelector("#pf-font").value,
+      defaultCourier: el.querySelector("#pf-courier").value,
+      backupKeep: clamp(el.querySelector("#pf-backup").value, 5, 365, 30),
+      aging1: clamp(el.querySelector("#pf-a1").value, 1, 999, 30),
+      aging2: clamp(el.querySelector("#pf-a2").value, 2, 999, 60),
+      aging3: clamp(el.querySelector("#pf-a3").value, 3, 999, 90),
+      quoteFooter: el.querySelector("#pf-qfooter").value.trim(),
+      defTwoCopies: el.querySelector("#pf-two").checked,
+      defShowVat: el.querySelector("#pf-vat").checked,
+      defAutoSale: el.querySelector("#pf-autosale").checked,
+      saleToStmt: el.querySelector("#pf-tostmt").checked,
+      defVatExempt: el.querySelector("#pf-vatx").checked
+    };
+    // 연령 구간은 오름차순이어야 함
+    if (!(state.prefs.aging1 < state.prefs.aging2 && state.prefs.aging2 < state.prefs.aging3)) {
+      state.prefs.aging1 = 30; state.prefs.aging2 = 60; state.prefs.aging3 = 90;
+      toast("연령 구간은 작은 값부터 커야 합니다. 기본값(30/60/90)으로 저장했습니다.", "error");
+    } else {
+      toast("세부 옵션을 저장했습니다.", "success");
+    }
+    markDirty();
+    renderApp();
+  });
 
   // 소매가·도매가 구분 토글
   el.querySelector("#chk-wholesale").addEventListener("change", (e) => {

@@ -206,7 +206,7 @@ function tradeForm(kind, id) {
   const rec = id ? state[cfg.listKey].find((x) => x.id === id) : null;
   // 편집용 사본 라인
   let lines = rec ? rec.lines.map((l) => ({ ...l })) : [{ itemId: "", name: "", qty: 1, unitPrice: 0 }];
-  let vatExempt = rec ? !(rec.vat > 0) && rec.total === rec.supply : false;
+  let vatExempt = rec ? !(rec.vat > 0) && rec.total === rec.supply : !!state.prefs.defVatExempt; // 신규는 세부 옵션 기본값 (면세사업자용)
 
   const useItems = isModuleOn("inventory") && state.items.length > 0;
 
@@ -260,6 +260,10 @@ function tradeForm(kind, id) {
     '<div style="margin-top:12px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">' +
     '<label style="display:flex;align-items:center;gap:6px;cursor:pointer">' +
     '<input type="checkbox" id="trf-vatx"' + (vatExempt ? " checked" : "") + " style=\"width:auto\"> 부가세 미적용</label>" +
+    // 매출 신규 등록 시: 저장 후 거래명세서 발행으로 바로 이어가기 (명세서 폼이 이 매출 내용으로 채워져 열림)
+    (kind === "sales" && !rec && isModuleOn("documents") ?
+      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer">' +
+      '<input type="checkbox" id="trf-tostmt"' + (state.prefs.saleToStmt ? " checked" : "") + ' style="width:auto"> 저장 후 거래명세서 바로 발행</label>' : "") +
     '<span id="trf-totals">' + totalsHTML() + "</span></div>" +
 
     '<div class="form-field" style="margin-top:12px"><label>메모</label>' +
@@ -347,12 +351,19 @@ function tradeForm(kind, id) {
         status: overlay.querySelector("#trf-status").value,
         memo: overlay.querySelector("#trf-memo").value.trim()
       };
+      let savedRec = rec;
       if (rec) Object.assign(rec, data);
-      else state[cfg.listKey].push(Object.assign({ id: uid("s"), payments: [] }, data));
+      else {
+        savedRec = Object.assign({ id: uid("s"), payments: [] }, data);
+        state[cfg.listKey].push(savedRec);
+      }
+      // 매출 저장 후 거래명세서 바로 발행 옵션 (명세서 폼이 이 매출로 채워져 열림)
+      const toStmt = overlay.querySelector("#trf-tostmt");
       markDirty();
       overlay.remove();
       renderApp();
       toast(cfg.label + (id ? "을(를) 수정했습니다." : "이(가) 등록되었습니다."), "success");
+      if (toStmt && toStmt.checked && !rec) openStatementForSale(savedRec.id);
     }
   });
   document.body.appendChild(overlay);

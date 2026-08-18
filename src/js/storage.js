@@ -304,12 +304,13 @@ async function saveNow() {
   }
 }
 
-/** 백업 파일 30개 초과 시 오래된 것 삭제 */
+/** 일별 백업 보관 개수 초과 시 오래된 것 삭제 (개수는 세부 옵션에서 변경, 5~365개) */
 async function pruneBackups() {
+  const keep = Math.min(365, Math.max(5, Number(state.prefs && state.prefs.backupKeep) || MAX_BACKUPS));
   const files = (await storage.listFiles(BACKUP_DIR))
     .filter((n) => /^erp-backup-\d{4}-\d{2}-\d{2}\.json$/.test(n))
     .sort(); // 파일명이 날짜라서 사전순 = 시간순
-  while (files.length > MAX_BACKUPS) {
+  while (files.length > keep) {
     const oldest = files.shift();
     await storage.deleteFile(BACKUP_DIR + "/" + oldest);
   }
