@@ -48,6 +48,13 @@ function tradeSummaryText(kind, list) {
     cfg.unpaidLabel + " " + fmtMoney(sum(list, (r) => unpaidAmount(r))) + "원";
 }
 
+/** 본문: 보기 방식에 따라 목록 / 장부 / 거래처별 잔금 */
+function tradeBodyHTML(kind, list) {
+  if (kind === "sales" && tradeView.sales === "book") return salesBookHTML(salesBookEvents(), false);
+  if (kind === "sales" && tradeView.sales === "balance") return partnerBalanceHTML(partnerBalanceRows(tradeFilter.sales), tradeFilter.sales);
+  return tradeTableHTML(kind, list);
+}
+
 /** 목록 표 HTML */
 function tradeTableHTML(kind, list) {
   const cfg = TRADE_CFG[kind];
@@ -78,7 +85,14 @@ function renderTradeList(kind, el) {
   const icon = kind === "sales" ? "💰" : "📦";
   el.innerHTML =
     '<div class="page-title">' + icon + " " + cfg.label + " 관리" +
+    // 매출: 목록 / 장부 보기 / 거래처별 잔금 전환
+    (kind === "sales" ?
+      '<span style="display:inline-flex;gap:4px;margin-left:12px">' +
+      [["list", "목록"], ["book", "📒 장부 보기"], ["balance", "거래처별 잔금"]].map(([v, t]) =>
+        '<button class="btn btn-sm' + (tradeView.sales === v ? " btn-primary" : "") + '" data-view="' + v + '">' + t + "</button>").join("") +
+      "</span>" : "") +
     '<span class="spacer"></span>' +
+    (kind === "sales" && tradeView.sales === "book" ? '<button class="btn" id="btn-open-balance">🧾 거래처별 잔금 열기</button>' : "") +
     '<button class="btn" id="btn-trade-template">📄 엑셀 양식 받기</button>' +
     '<label class="btn">📥 엑셀 업로드<input type="file" id="trade-import" accept=".xlsx,.csv" style="display:none"></label>' +
     '<button class="btn" id="btn-trade-xlsx">📤 엑셀 다운로드</button>' +
@@ -99,7 +113,17 @@ function renderTradeList(kind, el) {
     '<input type="text" id="tf-search" placeholder="검색" value="' + esc(f.search) + '" style="width:160px">' +
     '<span class="sub" id="tf-count">' + tradeSummaryText(kind, list) + "</span></div>" +
 
-    '<div class="card" id="trade-card">' + tradeTableHTML(kind, list) + "</div>";
+    '<div class="card" id="trade-card">' + tradeBodyHTML(kind, list) + "</div>";
+
+  // 보기 전환
+  el.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => { tradeView.sales = b.getAttribute("data-view"); renderApp(); }));
+  const openBal = el.querySelector("#btn-open-balance");
+  if (openBal) openBal.addEventListener("click", openBalanceModal);
+  // 거래처 이름 클릭 → 그 거래처 장부 모달
+  el.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("[data-book-partner]");
+    if (a) { e.preventDefault(); openPartnerBookModal(a.getAttribute("data-book-partner")); }
+  });
 
   // 필터 이벤트
   el.querySelector("#tf-from").addEventListener("change", (e) => { f.from = e.target.value; renderApp(); });
@@ -131,13 +155,17 @@ function renderTradeList(kind, el) {
     f.search = e.target.value;
     const list2 = computeTradeList(kind);
     el.querySelector("#tf-count").textContent = tradeSummaryText(kind, list2);
-    el.querySelector("#trade-card").innerHTML = tradeTableHTML(kind, list2);
+    el.querySelector("#trade-card").innerHTML = tradeBodyHTML(kind, list2);
     bindTradeRows(el.querySelector("#trade-card"), kind);
   });
 
   el.querySelector("#btn-add-trade").addEventListener("click", () => tradeForm(kind, null));
   el.querySelector("#btn-trade-template").addEventListener("click", () => downloadTradeTemplate(kind));
-  el.querySelector("#btn-trade-xlsx").addEventListener("click", () => exportTradesXlsx(kind, computeTradeList(kind)));
+  el.querySelector("#btn-trade-xlsx").addEventListener("click", () => {
+    if (kind === "sales" && tradeView.sales === "book") return exportBookXlsx(salesBookEvents(), tradeFilter.sales);
+    if (kind === "sales" && tradeView.sales === "balance") return exportBalanceXlsx(partnerBalanceRows(tradeFilter.sales), tradeFilter.sales);
+    exportTradesXlsx(kind, computeTradeList(kind));
+  });
   el.querySelector("#trade-import").addEventListener("change", (e) => {
     if (e.target.files.length) importTradesFile(kind, e.target.files[0]);
     e.target.value = "";
@@ -839,4 +867,234 @@ async function deleteTrade(kind, id) {
   markDirty();
   renderApp();
   toast(cfg.label + " 기록을 삭제했습니다.", "success");
+}
+
+/* ============================================================
+ * 장부 보기 / 거래처별 잔금 (매출 관리의 보기 전환)
+ *  - 장부 보기: 사용자의 엑셀 장부와 같은 열 —
+ *    입금은행 | 날짜 | 거래처 | 매출&반품내역 | 매출&반품 | 전잔 | 입금액 | 합계(총미수) | 비고(세금계산서) | 쇼핑몰 판매액
+ *    전잔·합계는 거래처별 누계 (엑셀에서 손으로 이어 쓰던 값)
+ *  - 거래처별 잔금: 거래처 | 기초이월 | 당기 매출&반품 | 입금 | 총미수금잔액 | 입금자 | 은행 | 계산서 메모
+ * ============================================================ */
+let tradeView = { sales: "list" }; // list | book | balance
+
+// 메모 정리: 엑셀 업로드 때 붙은 "계좌이체(기업-425) / 장부 L12" 같은 꼬리표는 떼고, 계산서 관련 문구만 비고로
+const cleanMemo = (memo) => String(memo || "").split(/\s+\/\s+/).filter((x) => x && !/^장부 L\d+/.test(x) && !/^(계좌이체|이체|어음|수표|카드|현금)(\(|$)/.test(x) && !/^엑셀/.test(x));
+const taxOf = (parts) => parts.filter((x) => /계산서|발행|발급/.test(x)).join(" / ");
+const descOf = (parts) => parts.filter((x) => !/계산서|발행|발급/.test(x)).join(" / ");
+
+/** 장부용 이벤트 목록 (기간·거래처·검색 필터 반영, 날짜순, 같은 날은 매출 → 입금) */
+function salesBookEvents(opts) {
+  const f = opts || tradeFilter.sales;
+  const q = (f.search || "").trim().toLowerCase();
+  const ev = [];
+  const isMall = (r) => (r.payments || []).some((pm) => /쇼핑몰/.test(pm.memo || ""));
+  const bankOf = (pm) => {
+    const memo = pm.memo || "";
+    const m = /(?:계좌이체|이체|어음|수표|카드)\(([^)]+)\)/.exec(memo); // "계좌이체(기업-425)" → 기업-425, "어음(문방구어음)" → 문방구어음
+    if (m) return m[1];
+    if (/가계수표/.test(memo)) return "가계수표";
+    if (/어음/.test(memo)) return "어음";
+    if (/현금/.test(memo) || pm.method === "현금") return "현금";
+    return pm.method && pm.method !== "기타" ? pm.method : "";
+  };
+  state.sales.forEach((r) => {
+    if (!getPartner(r.partnerId)) return;
+    if (f.partnerId && r.partnerId !== f.partnerId) return;
+    const pn = partnerName(r.partnerId);
+    const mall = isMall(r);
+    const desc = lineSummary(r.lines) + ((r.lines || []).some((l) => l.note) ? " · " + r.lines.filter((l) => l.note).map((l) => l.note).join(", ") : "");
+    if (inRange(r.date, f.from, f.to) && (!q || pn.toLowerCase().includes(q) || desc.toLowerCase().includes(q) || (r.memo || "").toLowerCase().includes(q))) {
+      ev.push({ t: "trade", id: r.id, date: r.date, pid: r.partnerId, pn, desc, amount: Number(r.total) || 0, mall, memo: cleanMemo(r.memo).join(" / "), bank: "" });
+    }
+    if (mall) return; // 위탁몰 판매의 자동 수금은 장부에 따로 쓰지 않는다 (엑셀과 동일)
+    (r.payments || []).forEach((pm) => {
+      if (!inRange(pm.date, f.from, f.to)) return;
+      const d2 = pm.memo || "";
+      if (q && !pn.toLowerCase().includes(q) && !d2.toLowerCase().includes(q)) return;
+      const parts = cleanMemo(d2.replace(/\s*\(반품 상계\)\s*/g, ""));
+      ev.push({ t: "pay", id: r.id, date: pm.date, pid: r.partnerId, pn, desc: descOf(parts), amount: Number(pm.amount) || 0, memo: taxOf(parts), bank: bankOf(pm) });
+    });
+  });
+  state.partners.forEach((p) => {
+    if (f.partnerId && p.id !== f.partnerId) return;
+    (p.openingPayments || []).forEach((x) => {
+      if (x.kind !== "수금" || !inRange(x.date, f.from, f.to)) return;
+      const d2 = (x.memo || "이월분 수금");
+      if (q && !p.name.toLowerCase().includes(q) && !d2.toLowerCase().includes(q)) return;
+      const parts = cleanMemo(d2);
+      ev.push({ t: "pay", id: "", date: x.date, pid: p.id, pn: p.name, desc: descOf(parts) || "이월분 수금", amount: Number(x.amount) || 0, memo: taxOf(parts), bank: bankOf(x) });
+    });
+  });
+  // 입금 1건이 FIFO 배분으로 여러 매출 건에 쪼개져 있어도 장부에는 한 줄로 (같은 날·거래처·적요 묶기)
+  const merged = []; const payKey = {};
+  ev.forEach((e) => {
+    if (e.t !== "pay") { merged.push(e); return; }
+    const k = e.pid + "|" + e.date + "|" + e.desc;
+    if (payKey[k]) { payKey[k].amount += e.amount; return; }
+    const m = Object.assign({}, e); payKey[k] = m; merged.push(m);
+  });
+  ev.length = 0; merged.forEach((e) => ev.push(e));
+  ev.sort((a, b) => a.date.localeCompare(b.date) || (a.t === "trade" ? -1 : 1) - (b.t === "trade" ? -1 : 1));
+  // 거래처별 누계 (기간 시작 전 잔액에서 출발)
+  const run = {};
+  ev.forEach((e) => {
+    if (!(e.pid in run)) run[e.pid] = partnerBalanceBefore(e.pid, f.from || "0000-00-00", "sales");
+    e.prev = run[e.pid];
+    if (e.t === "trade" && !e.mall) run[e.pid] += e.amount;
+    if (e.t === "pay") run[e.pid] -= e.amount;
+    e.after = run[e.pid];
+  });
+  return ev;
+}
+
+/** 장부 표 HTML */
+function salesBookHTML(ev, compact) {
+  const won = (n) => "₩" + fmtMoney(n);
+  const rows = ev.map((e) => {
+    const isPay = e.t === "pay";
+    const neg = e.t === "trade" && e.amount < 0;
+    const style = isPay ? "color:#c2185b" : neg ? "color:var(--danger)" : "";
+    const taxMemo = /계산서|발행|발급/.test(e.memo) ? '<span class="badge green">계산서</span> ' : "";
+    return '<tr style="' + style + '">' +
+      '<td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.bank) + "</td>" +
+      '<td style="color:#1565c0;white-space:nowrap">' + esc(e.date) + "</td>" +
+      '<td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><a href="#" data-book-partner="' + e.pid + '" style="font-weight:600;color:inherit" title="' + esc(e.pn) + '">' + esc(e.pn) + "</a></td>" +
+      "<td>" + esc(e.desc) + "</td>" +
+      '<td class="num">' + (e.t === "trade" && !e.mall ? won(e.amount) : "") + "</td>" +
+      '<td class="num" style="color:#1565c0">' + (e.prev ? won(e.prev) : "") + "</td>" +
+      '<td class="num" style="color:#c2185b">' + (isPay ? won(e.amount) : "") + "</td>" +
+      '<td class="num"><b>' + won(e.after) + "</b></td>" +
+      '<td style="font-size:11.5px">' + taxMemo + esc(e.memo) + "</td>" +
+      '<td class="num">' + (e.mall ? won(e.amount) : "") + "</td>" +
+      (compact ? "" :
+        '<td class="actions" style="white-space:nowrap">' + (e.t === "trade" ?
+          '<button class="btn btn-sm" data-t-pay="' + e.id + '">수금</button> ' +
+          (isModuleOn("documents") ? '<button class="btn btn-sm" data-t-doc="' + e.id + '">명세서</button> ' : "") +
+          '<button class="btn btn-sm" data-t-edit="' + e.id + '">수정</button>' : "") + "</td>") +
+      "</tr>";
+  }).join("");
+  const totSale = sum(ev.filter((e) => e.t === "trade" && !e.mall), (e) => e.amount);
+  const totPay = sum(ev.filter((e) => e.t === "pay"), (e) => e.amount);
+  const totMall = sum(ev.filter((e) => e.t === "trade" && e.mall), (e) => e.amount);
+  return '<div class="table-wrap"><table class="grid" style="font-size:12.5px;table-layout:fixed;width:' + (compact ? "1160px" : "1310px") + '">' +
+    "<colgroup><col style='width:86px'><col style='width:90px'><col style='width:135px'><col style='width:221px'><col style='width:100px'><col style='width:100px'><col style='width:100px'><col style='width:108px'><col style='width:150px'><col style='width:70px'>" + (compact ? "" : "<col style='width:150px'>") + "</colgroup>" +
+    "<thead><tr><th>입금은행</th><th>날짜</th><th>거래처</th><th>매출&반품내역</th>" +
+    '<th class="num">매출&반품</th><th class="num">전잔</th><th class="num">입금액</th><th class="num">합계(총미수)</th>' +
+    "<th>비고 / 세금계산서</th><th class=\"num\">쇼핑몰 판매액</th>" + (compact ? "" : "<th></th>") + "</tr></thead><tbody>" +
+    (ev.length ? rows : '<tr><td colspan="11"><div class="empty-msg">기간 내 내역이 없습니다.</div></td></tr>') +
+    '<tr class="total-row"><td colspan="4">합계 (' + ev.length + "줄)</td>" +
+    '<td class="num">' + won(totSale) + '</td><td></td><td class="num">' + won(totPay) + "</td><td></td><td></td>" +
+    '<td class="num">' + won(totMall) + "</td>" + (compact ? "" : "<td></td>") + "</tr>" +
+    "</tbody></table></div>";
+}
+
+/** 거래처별 잔금 표 — 기간 기준: 기초이월(기간 시작 전 잔액) + 당기 매출&반품 − 입금 = 총미수금잔액 */
+function partnerBalanceRows(f) {
+  const q = (f.search || "").trim().toLowerCase();
+  const rows = [];
+  state.partners.forEach((p) => {
+    if (f.partnerId && p.id !== f.partnerId) return;
+    if (q && !p.name.toLowerCase().includes(q)) return;
+    const opening = partnerBalanceBefore(p.id, f.from || "0000-00-00", "sales");
+    let sales = 0, paid = 0, lastTax = "";
+    state.sales.forEach((r) => {
+      if (r.partnerId !== p.id) return;
+      const mall = (r.payments || []).some((pm) => /쇼핑몰/.test(pm.memo || ""));
+      if (inRange(r.date, f.from, f.to) && !mall) sales += Number(r.total) || 0;
+      if (!mall) (r.payments || []).forEach((pm) => {
+        if (!inRange(pm.date, f.from, f.to)) return;
+        paid += Number(pm.amount) || 0;
+        if (/계산서|발행|발급/.test(pm.memo || "")) lastTax = pm.date + " " + taxOf(cleanMemo(pm.memo));
+      });
+    });
+    (p.openingPayments || []).forEach((x) => {
+      if (x.kind !== "수금" || !inRange(x.date, f.from, f.to)) return;
+      paid += Number(x.amount) || 0;
+      if (/계산서|발행|발급/.test(x.memo || "")) lastTax = x.date + " " + taxOf(cleanMemo(x.memo));
+    });
+    const bal = opening + sales - paid;
+    if (!opening && !sales && !paid && !bal && !f.partnerId) return; // 거래 없는 거래처는 숨김
+    const payer = (/입금자:\s*([^/]+)/.exec(p.memo || "") || [])[1] || "";
+    const bank = (/입금은행:\s*([^/]+)/.exec(p.memo || "") || [])[1] || "";
+    rows.push({ p, opening, sales, paid, bal, payer: payer.trim(), bank: bank.trim(), lastTax });
+  });
+  rows.sort((a, b) => a.p.name.localeCompare(b.p.name, "ko"));
+  return rows;
+}
+
+function partnerBalanceHTML(rows, f) {
+  const won = (n) => "₩" + fmtMoney(n);
+  const tot = (k) => sum(rows, (r) => r[k]);
+  return '<div class="table-wrap"><table class="grid" style="font-size:12.5px">' +
+    "<thead><tr><th>거래처</th><th class=\"num\">기초이월<br><span class=\"sub\">(" + esc(f.from || "처음") + " 이전)</span></th>" +
+    '<th class="num">당기 매출&반품</th><th class="num">입금</th><th class="num">총미수금잔액</th><th>입금자</th><th>은행</th><th>최근 계산서 메모</th></tr></thead><tbody>' +
+    (rows.length ? rows.map((r) =>
+      "<tr><td><a href=\"#\" data-book-partner=\"" + r.p.id + "\" style=\"font-weight:600;color:inherit\">" + esc(r.p.name) + "</a></td>" +
+      '<td class="num">' + (r.opening ? won(r.opening) : "") + "</td>" +
+      '<td class="num">' + won(r.sales) + "</td>" +
+      '<td class="num" style="color:#c2185b">' + won(r.paid) + "</td>" +
+      '<td class="num"><b style="color:' + (r.bal > 0 ? "#1565c0" : r.bal < 0 ? "var(--danger)" : "inherit") + '">' + won(r.bal) + "</b></td>" +
+      "<td>" + esc(r.payer) + "</td><td>" + esc(r.bank) + "</td>" +
+      '<td style="font-size:11px">' + esc(r.lastTax) + "</td></tr>").join("")
+      : '<tr><td colspan="8"><div class="empty-msg">해당 거래처가 없습니다.</div></td></tr>') +
+    '<tr class="total-row"><td>합계 (' + rows.length + "곳)</td>" +
+    '<td class="num">' + won(tot("opening")) + '</td><td class="num">' + won(tot("sales")) + "</td>" +
+    '<td class="num">' + won(tot("paid")) + '</td><td class="num"><b>' + won(tot("bal")) + "</b></td><td colspan='3'></td></tr>" +
+    "</tbody></table></div>";
+}
+
+/** 거래처 1곳 장부를 모달로 (장부·잔금 표에서 거래처 이름 클릭) */
+function openPartnerBookModal(pid) {
+  const p = getPartner(pid);
+  if (!p) return;
+  const f = { from: tradeFilter.sales.from, to: tradeFilter.sales.to, partnerId: pid, search: "" };
+  const ev = salesBookEvents(f);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = '<div class="modal-box" style="max-width:1200px;max-height:92vh;display:flex;flex-direction:column">' +
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap"><h3>' + esc(p.name) + " 장부</h3>" +
+    '<span class="sub">' + esc(f.from || "처음") + " ~ " + esc(f.to || "오늘") + " · 현재 미수 <b>" + fmtMoney(partnerBalance(pid, "sales")) + "</b>원</span>" +
+    '<span style="flex:1"></span><button class="btn" data-act="cancel">닫기</button></div>' +
+    '<div style="overflow:auto">' + salesBookHTML(ev, true) + "</div></div>";
+  overlay.addEventListener("click", (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute("data-act");
+    if (e.target === overlay || act === "cancel") overlay.remove();
+  });
+  document.body.appendChild(overlay);
+}
+
+/** 거래처별 잔금 표를 모달로 (장부를 보면서 옆에 띄워 확인) */
+function openBalanceModal() {
+  const f = tradeFilter.sales;
+  const rows = partnerBalanceRows(f);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = '<div class="modal-box" style="max-width:1100px;max-height:92vh;display:flex;flex-direction:column">' +
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap"><h3>거래처별 잔금</h3>' +
+    '<span class="sub">' + esc(f.from || "처음") + " ~ " + esc(f.to || "오늘") + "</span>" +
+    '<span style="flex:1"></span><button class="btn" id="bal-xlsx">📤 엑셀</button><button class="btn" data-act="cancel">닫기</button></div>' +
+    '<div style="overflow:auto">' + partnerBalanceHTML(rows, f) + "</div></div>";
+  overlay.addEventListener("click", (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute("data-act");
+    if (e.target === overlay || act === "cancel") { overlay.remove(); return; }
+    const a = e.target.closest && e.target.closest("[data-book-partner]");
+    if (a) { e.preventDefault(); openPartnerBookModal(a.getAttribute("data-book-partner")); }
+  });
+  overlay.querySelector("#bal-xlsx").addEventListener("click", () => exportBalanceXlsx(rows, f));
+  document.body.appendChild(overlay);
+}
+
+function exportBookXlsx(ev, f) {
+  downloadXlsx("장부_" + (f.from || "전체") + "~" + (f.to || "전체") + ".xlsx", [
+    ["입금은행", "날짜", "거래처", "매출&반품내역", "매출&반품", "전잔", "입금액", "합계(총미수)", "비고/세금계산서", "쇼핑몰 판매액"],
+    ...ev.map((e) => [e.bank, e.date, e.pn, e.desc, e.t === "trade" && !e.mall ? e.amount : "", e.prev || "", e.t === "pay" ? e.amount : "", e.after,
+      e.t === "trade" ? e.memo : (/계산서|발행|발급/.test(e.memo) ? e.memo : ""), e.mall ? e.amount : ""])
+  ], "장부");
+}
+function exportBalanceXlsx(rows, f) {
+  downloadXlsx("거래처별잔금_" + (f.from || "전체") + "~" + (f.to || "전체") + ".xlsx", [
+    ["거래처", "기초이월", "당기 매출&반품", "입금", "총미수금잔액", "입금자", "은행", "최근 계산서 메모"],
+    ...rows.map((r) => [r.p.name, r.opening, r.sales, r.paid, r.bal, r.payer, r.bank, r.lastTax])
+  ], "거래처별잔금");
 }
