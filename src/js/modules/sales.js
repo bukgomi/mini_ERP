@@ -242,6 +242,7 @@ function tradeForm(kind, id) {
       '<td style="width:90px"><input type="text" class="num" data-lf="qty" data-i="' + i + '" value="' + fmtMoney(ln.qty) + '"></td>' +
       '<td style="width:120px"><input type="text" class="num" data-lf="unitPrice" data-i="' + i + '" value="' + fmtMoney(ln.unitPrice) + '"></td>' +
       '<td class="num" style="width:120px" data-amount="' + i + '">' + fmtMoney((ln.qty || 0) * (ln.unitPrice || 0)) + "</td>" +
+      '<td style="width:110px"><input type="text" data-lf="note" data-i="' + i + '" value="' + esc(ln.note || "") + '" placeholder="기타"></td>' +
       '<td style="width:40px"><button class="btn btn-sm" data-delline="' + i + '">✕</button></td></tr>'
     ).join("");
   }
@@ -269,7 +270,7 @@ function tradeForm(kind, id) {
     (kind === "sales" ? '<div id="trf-balance" class="card" style="margin-top:10px;margin-bottom:0;padding:8px 12px;background:var(--bg);display:none"></div>' : "") +
 
     '<div style="margin-top:12px"><table class="grid" id="trf-lines"><thead><tr>' +
-    "<th>품목</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">금액</th><th></th></tr></thead>" +
+    "<th>품목</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">금액</th><th>기타</th><th></th></tr></thead>" +
     "<tbody>" + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="trf-addline" style="margin-top:8px">+ 품목 줄 추가</button></div>' +
 
@@ -394,6 +395,9 @@ function tradeForm(kind, id) {
     overlay.querySelectorAll('[data-lf="name"]').forEach((inp) => {
       inp.addEventListener("input", () => { lines[Number(inp.getAttribute("data-i"))].name = inp.value; });
     });
+    overlay.querySelectorAll('[data-lf="note"]').forEach((inp) => {
+      inp.addEventListener("input", () => { lines[Number(inp.getAttribute("data-i"))].note = inp.value; });
+    });
     overlay.querySelectorAll('[data-lf="spec"]').forEach((ta) => {
       const fit = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
       fit();
@@ -463,13 +467,13 @@ function tradeForm(kind, id) {
     if (act === "preview") {
       const pid = pHidden().value;
       if (!pid || !getPartner(pid)) { toast("거래처를 먼저 선택하세요.", "error"); return; }
-      const pl = lines.map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
+      const pl = lines.map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0, note: (l.note || "").trim() }))
         .filter((l) => l.name && l.qty !== 0);
       if (!pl.length) { toast("품목을 1줄 이상 입력하세요.", "error"); return; }
       const date = overlay.querySelector("#trf-date").value || today();
       const prev = partnerBalanceBefore(pid, date, "sales");
       const dayTotal = calcAmounts(pl).total;
-      const temp = { type: "statement", no: "(미발행)", date, partnerId: pid, lines: pl, discountRate: 0, showVat: false,
+      const temp = { type: "statement", no: "(미발행)", date, partnerId: pid, lines: pl, discountRate: 0, showVat: false, memo: overlay.querySelector("#trf-memo").value.trim(),
         twoCopies: state.prefs.defTwoCopies !== false, settle: { prevBalance: prev, dayTotal, sum: prev + dayTotal, paid: 0, balance: prev + dayTotal } };
       const pv = document.createElement("div");
       pv.className = "modal-overlay";
@@ -498,7 +502,7 @@ function tradeForm(kind, id) {
       const partnerId = overlay.querySelector("#trf-partner").value;
       if (!partnerId || !getPartner(partnerId)) { toast("거래처를 검색해 목록에서 선택하세요.", "error"); return; }
       const cleanLines = lines
-        .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
+        .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0, note: (l.note || "").trim() }))
         .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력
       if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요 (품명·수량 필수). 반품은 수량을 음수(-)로 입력하세요.", "error"); return; }
 

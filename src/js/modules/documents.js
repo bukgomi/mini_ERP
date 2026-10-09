@@ -107,7 +107,7 @@ function issueStatementForSale(saleId) {
   if (exist) { printDocument(exist.id); return exist; }
   const lines = sale.lines.map((l) => {
     const item = l.itemId ? getItem(l.itemId) : null;
-    return { name: l.name, spec: l.spec || (item ? item.spec : "") || "", qty: l.qty, unitPrice: l.unitPrice, note: "" };
+    return { name: l.name, spec: l.spec || (item ? item.spec : "") || "", qty: l.qty, unitPrice: l.unitPrice, note: l.note || "" };
   });
   const showVat = !!state.prefs.defShowVat;
   const dayTotal = stmtAmounts(lines, 0, showVat).total;
@@ -166,7 +166,7 @@ function documentForm(type, docId, saleId) {
   let lines = doc ? doc.lines.map((l) => ({ ...l }))
     : sale ? sale.lines.map((l) => {
         const item = l.itemId ? getItem(l.itemId) : null;
-        return { name: l.name, spec: l.spec || (item ? item.spec : "") || "", qty: l.qty, unitPrice: l.unitPrice, note: "" };
+        return { name: l.name, spec: l.spec || (item ? item.spec : "") || "", qty: l.qty, unitPrice: l.unitPrice, note: l.note || "" };
       })
     // 새 문서는 기본 5줄로 시작 (한 줄씩 추가하는 불편 제거 — 빈 줄은 저장 시 자동 제외)
     : Array.from({ length: 5 }, () => ({ name: "", spec: "", qty: 1, unitPrice: 0, note: "" }));
@@ -195,6 +195,8 @@ function documentForm(type, docId, saleId) {
       '<td style="width:80px"><input type="text" class="num" data-df="qty" data-i="' + i + '" value="' + fmtMoney(ln.qty) + '"></td>' +
       '<td style="width:110px"><input type="text" class="num" data-df="unitPrice" data-i="' + i + '" value="' + fmtMoney(ln.unitPrice) + '"></td>' +
       '<td class="num" style="width:110px" data-damount="' + i + '">' + fmtMoney((ln.qty || 0) * (ln.unitPrice || 0)) + "</td>" +
+      // 기타: 줄별 비고(색상·반품예정 등) — 인쇄의 '기 타' 열에 그대로 나간다
+      '<td style="width:100px"><input type="text" data-df="note" data-i="' + i + '" value="' + esc(ln.note || "") + '" placeholder="기타"></td>' +
       '<td style="width:40px"><button class="btn btn-sm" data-ddel="' + i + '">✕</button></td></tr>').join("");
   }
 
@@ -227,7 +229,7 @@ function documentForm(type, docId, saleId) {
     "</div>" +
 
     '<div style="margin-top:12px"><table class="grid"><thead><tr>' +
-    "<th>품명</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">공급가액</th><th></th></tr></thead>" +
+    "<th>품명</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">공급가액</th><th>기타</th><th></th></tr></thead>" +
     '<tbody id="dcf-lines">' + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="dcf-addline" style="margin-top:8px">+ 품목 줄 추가</button>' +
     '<p class="sub" style="margin-top:6px">💡 품명 칸에 입력하면 등록 품목이 검색됩니다 (선택 시 규격·단가 자동) · ' +
@@ -499,7 +501,7 @@ function documentForm(type, docId, saleId) {
       const partnerId = selPartnerId;
       if (!partnerId || !getPartner(partnerId)) { toast("거래처를 검색해 목록에서 선택하세요.", "error"); return; }
       const cleanLines = lines
-        .map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
+        .map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0, note: (l.note || "").trim() }))
         .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력 (마이너스 명세서)
       if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요. 반품은 수량을 음수(-)로 입력하세요.", "error"); return; }
 
@@ -555,7 +557,7 @@ function documentForm(type, docId, saleId) {
           // 품명이 등록 품목과 일치하면 연결 → 재고 연동
           lines: cleanLines.map((l) => {
             const it = state.items.find((x) => x.name === l.name);
-            return { itemId: it ? it.id : "", name: l.name, spec: l.spec || "", qty: l.qty, unitPrice: l.unitPrice };
+            return { itemId: it ? it.id : "", name: l.name, spec: l.spec || "", qty: l.qty, unitPrice: l.unitPrice, note: l.note || "" };
           }),
           supply: a.total - a.vat, vat: a.vat, total: a.total,
           vatIncluded: showVat,
@@ -765,7 +767,7 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
       '<td class="stmt-num">' + fmtMoney(l.qty) + "</td>" +
       '<td class="stmt-num">' + fmtMoney(l.unitPrice) + "</td>" +
       '<td class="stmt-num">' + fmtMoney(lineSupply) + "</td>" +
-      "<td" + (showVat ? ' class="stmt-num">' + fmtMoney(Math.round(lineSupply * 0.1)) : ">") + "</td></tr>";
+      "<td" + (showVat ? ' class="stmt-num">' + fmtMoney(Math.round(lineSupply * 0.1)) : ' style="font-size:11px">' + esc(l.note || "").replace(/\n/g, "<br>")) + "</td></tr>";
   });
   const rowsPerPage = Math.min(30, Math.max(5, Number(state.prefs.stmtRows) || 12));
   for (let i = pageLines.length; i < rowsPerPage; i++)
@@ -834,7 +836,10 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
       "<tr><th>전잔금</th><td class='stmt-num'>₩" + fmtMoney(st.prevBalance) + "</td>" +
       "<th>합 계</th><td class='stmt-num'>₩" + fmtMoney(st.sum) + "</td></tr>" +
       "<tr><th>입 금</th><td class='stmt-num'>" + (st.paid ? "₩" + fmtMoney(st.paid) : "") + "</td>" +
-      "<th>총미수잔액</th><td class='stmt-num'><b>₩" + fmtMoney(st.balance) + "</b></td></tr></table>"
+      "<th>총미수잔액</th><td class='stmt-num'><b>₩" + fmtMoney(st.balance) + "</b></td></tr></table>" +
+      // 메모란: 문서 메모(매출 메모) 인쇄. 비어 있어도 칸은 남겨 손으로 적을 수 있게
+      '<table style="margin-top:2mm"><colgroup><col style="width:17%"><col style="width:83%"></colgroup>' +
+      "<tr><th>메 모</th><td style='min-height:9mm;height:9mm;vertical-align:top;font-size:11px;line-height:1.35'>" + esc(d.memo || "").replace(/\n/g, "<br>") + "</td></tr></table>"
       : "") +
     "</div>";
 }
