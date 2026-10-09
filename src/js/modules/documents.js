@@ -780,17 +780,35 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
     '<div class="stmt-sub">( ' + copyTitle + " )</div>" +
     (pageCount > 1 ? '<div style="text-align:right;font-size:11px">' + (pageIdx + 1) + " / " + pageCount + " 장</div>" : "") +
 
-    // 상단: 작성일자 + 공급받는자 / 공급자 박스
-    '<table style="margin-bottom:2mm"><colgroup><col style="width:38%"><col style="width:12%"><col style="width:50%"></colgroup>' +
-    "<tr><td rowspan='4' style='border:none;vertical-align:top'>" +
-    "<div style='font-size:" + (state.prefs.printFont === "large" ? "13px" : "11.5px") + "'>작성일자: " + esc(d.date) + "</div>" +
-    "<div style='font-size:" + (state.prefs.printFont === "large" ? "20px" : "18px") + ";font-weight:700;margin-top:5mm'>" + esc(p.name) + " 귀하</div>" +
-    "<div style='font-size:" + (state.prefs.printFont === "large" ? "13px" : "11.5px") + ";margin-top:4mm'>아래와 같이 공급합니다.</div></td>" +
-    "<th>상 호</th><td>" + esc(co.name) + " <span style='float:right'>성명: " + esc(co.ceo) + "</span></td></tr>" +
-    "<tr><th>사업자<br>번호</th><td>" + esc(co.bizNumber) + "</td></tr>" +
-    "<tr><th>계 좌</th><td>" + esc(co.bankAccount) + "</td></tr>" +
-    "<tr><th>주소/<br>전화</th><td>" + esc(co.address) + (co.phone ? " ☎ " + esc(co.phone) : "") + "</td></tr>" +
-    "</table>" +
+    // 상단: 사용자 엑셀 양식과 동일한 격자 — 왼쪽(작성일자 / 거래처명 + 귀하 / 안내문), 가운데 세로 "공급자", 오른쪽 공급자 박스
+    // 거래처명은 칸 너비에 맞춰 띄어쓰기 단위로 자동 줄바꿈(두 줄), "귀하"는 별도 칸이라 자리가 고정된다
+    (function () {
+      const L2 = state.prefs.printFont === "large";
+      const kd = (function (iso) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ""); return m ? m[1] + "년 " + Number(m[2]) + "월 " + Number(m[3]) + "일" : (iso || ""); })(d.date);
+      const phones = String(co.phone || "").split(/[\/,\n]+/).map((x) => x.trim()).filter(Boolean); // "010-… / 032-…" → 두 줄
+      const th = "style='background:#efefef;text-align:center;font-weight:700;padding:2px 3px'";
+      return '<table style="margin-bottom:2mm;table-layout:fixed"><colgroup>' +
+        "<col style='width:11%'><col style='width:25%'><col style='width:7%'><col style='width:5%'>" +
+        "<col style='width:11%'><col style='width:21%'><col style='width:7%'><col style='width:13%'></colgroup>" +
+        // 1행: 작성일자 | 날짜 | (공급자 세로) | 상호 | 탑캐스팅 | 성명 | 신동욱
+        "<tr><th " + th + ">작성일자</th>" +
+        "<td colspan='2' style='text-align:center;font-weight:700;font-size:" + (L2 ? "15px" : "13.5px") + "'>" + esc(kd) + "</td>" +
+        "<td rowspan='5' style='text-align:center;font-weight:700;padding:0;width:5%'><div style='writing-mode:vertical-rl;letter-spacing:6px;margin:0 auto'>공급자</div></td>" +
+        "<th " + th + ">상 호</th><td style='font-weight:700;font-size:" + (L2 ? "15px" : "13.5px") + "'>" + esc(co.name) + "</td>" +
+        "<th " + th + ">성명</th><td style='font-weight:700;text-align:center;white-space:nowrap'>" + esc(co.ceo) + " <span style='font-size:9px;color:#c00'>(인)</span></td></tr>" +
+        // 2~4행: 거래처명(크게, 두 줄 가능) + 귀하 | 사업자번호 / 계좌 / 주소
+        "<tr><td colspan='2' rowspan='3' style='text-align:center;vertical-align:middle;font-weight:700;font-size:" + (L2 ? "21px" : "19px") + ";line-height:1.25;word-break:keep-all;overflow-wrap:anywhere;padding:4px 6px'>" +
+        // 상호에 띄어쓰기가 있으면 첫 띄어쓰기에서 두 줄로 ("오산 스타피싱" → 오산 / 스타피싱). 없으면 한 줄(길면 자동 줄바꿈)
+        esc(String(p.name || "").replace(/\s+/, "\n")).replace(/\n/g, "<br>") + "</td>" +
+        "<td rowspan='3' style='text-align:center;vertical-align:middle;font-size:" + (L2 ? "14px" : "12.5px") + ";white-space:nowrap'>귀하</td>" +
+        "<th " + th + ">사업자<br>번호</th><td colspan='3' style='text-align:center;font-weight:700;font-size:" + (L2 ? "14px" : "13px") + "'>" + esc(co.bizNumber) + "</td></tr>" +
+        "<tr><th " + th + ">계좌<br><span style='font-weight:400;font-size:10px'>" + esc(co.ceo) + "</span></th><td colspan='3' style='font-weight:700'>" + esc(co.bankAccount) + "</td></tr>" +
+        "<tr><th " + th + ">주 소</th><td colspan='3' style='font-size:" + (L2 ? "12px" : "11px") + "'>" + esc(co.address) + "</td></tr>" +
+        // 5행: 안내문 | 전화번호
+        "<tr><td colspan='3' style='font-size:" + (L2 ? "12px" : "11px") + "'>아래와 같이 공급합니다.</td>" +
+        "<th " + th + ">전화<br>번호</th><td colspan='3' style='text-align:center;font-weight:700;line-height:1.3'>" + (phones.length ? phones.map(esc).join("<br>") : "") + "</td></tr>" +
+        "</table>";
+    })() +
 
     // 합계(상단): 금액 + 원정 표기
     '<table style="margin-bottom:2mm"><tr><th style="width:20%">합계금액</th>' +
