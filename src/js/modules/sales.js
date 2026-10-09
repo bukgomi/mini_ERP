@@ -88,7 +88,7 @@ function salesListBookHTML() {
         '<td class="num" style="color:#1565c0">' + won(e.prev) + "</td>" +
         '<td class="num"><b>' + won(e.amount) + "</b></td>" +
         '<td class="num"><b style="color:var(--text)">' + won(e.after) + "</b></td>" +
-        '<td></td><td><span class="badge green">입금</span></td><td></td>' +
+        '<td><span class="badge green">입금</span></td><td></td>' +
         '<td class="actions" style="white-space:nowrap"><button class="btn btn-sm" data-book-paydel="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 삭제</button></td></tr>';
     }
     const r = getSale(e.id);
@@ -96,7 +96,6 @@ function salesListBookHTML() {
     const ps = payStatus(r);
     const payBadge = ps === "반품" ? '<span class="badge red">↩ 반품</span>' : ps === "완납" ? '<span class="badge green">완납</span>'
       : ps === "부분" ? '<span class="badge orange">부분수금</span>' : '<span class="badge red">미수</span>';
-    const unpaid = unpaidAmount(r);
     return "<tr" + (e.amount < 0 ? ' style="color:var(--danger)"' : "") + ">" +
       '<td style="white-space:nowrap">' + esc(r.date) + "</td>" +
       '<td style="min-width:110px"><a href="#" data-book-partner="' + e.pid + '" style="color:inherit;font-weight:600">' + esc(e.pn) + "</a></td>" +
@@ -107,7 +106,6 @@ function salesListBookHTML() {
       '<td class="num" style="color:#1565c0">' + won(e.prev) + "</td>" +
       '<td class="num" style="color:#c2185b">' + (e.mall ? won(e.amount) + ' <span class="ci-sub">쇼핑몰</span>' : "") + "</td>" +
       '<td class="num"><b>' + won(e.after) + "</b></td>" +
-      '<td class="num">' + (unpaid > 0 ? '<b style="color:var(--danger)">' + won(unpaid) + "</b>" : unpaid < 0 ? '<b style="color:var(--accent)">' + won(unpaid) + "</b>" : "0") + "</td>" +
       "<td>" + payBadge + "</td>" +
       '<td><button class="btn btn-sm" data-t-status="' + r.id + '" title="클릭하여 상태 변경">' + esc(r.status) + "</button></td>" +
       '<td class="actions" style="white-space:nowrap">' +
@@ -123,10 +121,10 @@ function salesListBookHTML() {
     "<thead><tr><th>날짜</th><th>거래처</th><th>품목 / 입금 내역</th>" +
     '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th>' +
     '<th class="num">전잔금</th><th class="num">입금</th><th class="num">총미수</th>' +
-    '<th class="num">미수금</th><th>결제</th><th>상태</th><th></th></tr></thead><tbody>' +
+    "<th>결제</th><th>상태</th><th></th></tr></thead><tbody>" +
     (readOnlyMode ? "" : salesListEntryRowHTML()) +
-    (ev.length ? rows : '<tr><td colspan="13"><div class="empty-msg">기간 내 매출·입금 기록이 없습니다. 위 입력 줄에 적고 Enter.</div></td></tr>') +
-    '<tr class="total-row"><td colspan="5">기간 합계 (' + ev.length + '줄)</td><td class="num">' + won(totSale) + '</td><td></td><td class="num">' + won(totPay) + "</td><td colspan='5'></td></tr>" +
+    (ev.length ? rows : '<tr><td colspan="12"><div class="empty-msg">기간 내 매출·입금 기록이 없습니다. 위 입력 줄에 적고 Enter.</div></td></tr>') +
+    '<tr class="total-row"><td colspan="5">기간 합계 (' + ev.length + '줄)</td><td class="num">' + won(totSale) + '</td><td></td><td class="num">' + won(totPay) + "</td><td colspan='4'></td></tr>" +
     "</tbody></table></div>";
 }
 
@@ -144,7 +142,7 @@ function salesListEntryRowHTML() {
     '<td class="num sub">자동</td>' +
     "<td>" + inp("pay", "입금액", "num") + "</td>" +
     '<td class="num sub">자동</td>' +
-    '<td colspan="2">' + inp("memo", "세금계산서·비고") + "</td>" +
+    "<td>" + inp("memo", "세금계산서·비고") + "</td>" +
     "<td>" + inp("mall", "쇼핑몰", "num") + "</td>" +
     '<td class="actions" style="white-space:nowrap"><button class="btn btn-sm btn-primary" id="be-save">저장 (Enter)</button></td></tr>';
 }
