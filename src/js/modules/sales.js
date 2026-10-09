@@ -255,16 +255,18 @@ function tradeForm(kind, id) {
     '<div class="modal-box wide"><h3 style="margin-bottom:14px">' + (id ? cfg.label + " 수정" : cfg.label + " 등록") + "</h3>" +
     '<div class="form-grid" style="grid-template-columns:repeat(3,1fr)">' +
     '<div class="form-field"><label>날짜</label><input type="date" id="trf-date" value="' + esc(rec ? rec.date : today()) + '"></div>' +
-    '<div class="form-field"><label>거래처 *</label><select id="trf-partner">' +
-    '<option value="">선택하세요</option>' +
-    state.partners
-      .filter((p) => cfg.partnerTypes.includes(p.type) || (rec && rec.partnerId === p.id))
-      .map((p) => '<option value="' + p.id + '"' + (rec && rec.partnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
-    "</select></div>" +
+    // 거래처: 이름 일부·초성("ㅅㅌ")만 쳐도 목록이 뜨는 검색 입력. 선택된 id는 hidden #trf-partner 에 보관
+    '<div class="form-field" style="position:relative"><label>거래처 * <span class="sub">(이름 일부·초성 입력 → 목록에서 선택)</span></label>' +
+    '<input type="text" id="trf-partner-search" placeholder="예: 스타 / ㅅㅌㅍㅅ / 오산" autocomplete="off" value="' + esc(rec ? partnerName(rec.partnerId) : "") + '">' +
+    '<input type="hidden" id="trf-partner" value="' + esc(rec ? rec.partnerId : "") + '">' +
+    '<div class="combo-list" id="trf-partner-list" style="display:none"></div></div>' +
     '<div class="form-field"><label>상태</label><select id="trf-status">' +
     cfg.statuses.map((s) => "<option" + (rec && rec.status === s ? " selected" : "") + ">" + s + "</option>").join("") +
     "</select></div>" +
     "</div>" +
+
+    // 전잔금·이번 거래·총미수 — 거래처를 고르면 바로 보인다 (매출만)
+    (kind === "sales" ? '<div id="trf-balance" class="card" style="margin-top:10px;margin-bottom:0;padding:8px 12px;background:var(--bg);display:none"></div>' : "") +
 
     '<div style="margin-top:12px"><table class="grid" id="trf-lines"><thead><tr>' +
     "<th>품목</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">금액</th><th></th></tr></thead>" +
@@ -287,13 +289,76 @@ function tradeForm(kind, id) {
 
     '<div class="modal-btns" style="margin-top:16px">' +
     '<button class="btn" data-act="cancel">취소</button>' +
-    '<button class="btn btn-primary" data-act="save">저장</button></div></div>';
+    (kind === "sales" && isModuleOn("documents") ? '<button class="btn" data-act="preview">👁 명세서 미리보기</button>' : "") +
+    '<button class="btn btn-primary" data-act="save">저장</button>' +
+    (kind === "sales" && !rec && isModuleOn("documents") ? '<button class="btn btn-primary" data-act="saveprint">🖨 저장 후 명세서 인쇄</button>' : "") +
+    "</div></div>";
+
+  /* ---------- 거래처 검색 콤보 ---------- */
+  const pSearch = () => overlay.querySelector("#trf-partner-search");
+  const pHidden = () => overlay.querySelector("#trf-partner");
+  const pList = () => overlay.querySelector("#trf-partner-list");
+  function renderPartnerList(q) {
+    const matches = state.partners
+      .filter((p) => cfg.partnerTypes.includes(p.type) || (rec && rec.partnerId === p.id))
+      .filter((p) => partnerMatches(p, q))
+      // 검색어가 이름의 앞쪽에서 맞을수록 위로 (단어 시작이면 가산), 같으면 가나다순
+      .sort((a, b) => {
+        const nq = String(q || "").replace(/\s+/g, "").toLowerCase();
+        const score = (p) => {
+          if (!nq) return 0;
+          const words = String(p.name || "").toLowerCase().split(/[\s\-()]+/).filter(Boolean);
+          if (words.some((w) => w.startsWith(nq) || chosung(w).startsWith(nq))) return 0; // 단어 시작 일치
+          const flat = String(p.name || "").replace(/\s+/g, "").toLowerCase();
+          const i = Math.max(flat.indexOf(nq), chosung(flat).indexOf(nq));
+          return i < 0 ? 99 : 1 + i;
+        };
+        return score(a) - score(b) || a.name.localeCompare(b.name, "ko");
+      })
+      .slice(0, 30);
+    pList().innerHTML = matches.length
+      ? matches.map((p) => {
+          const bal = partnerBalance(p.id, kind === "sales" ? "sales" : "purchases");
+          return '<div class="combo-item" data-pick="' + p.id + '"><span><b>' + esc(p.name) + "</b>" +
+            (state.useWholesale && kind === "sales" ? ' <span class="ci-sub">' + priceTierOf(p) + "가</span>" : "") + "</span>" +
+            '<span class="ci-sub">' + (bal > 0 ? cfg.unpaidLabel + " " + fmtMoney(bal) + "원" : "") + "</span></div>";
+        }).join("")
+      : '<div class="combo-empty">검색 결과가 없습니다. 거래처 관리에서 먼저 등록하세요.</div>';
+    pList().style.display = "block";
+    pList().querySelectorAll("[data-pick]").forEach((item) => {
+      item.addEventListener("mousedown", (e) => { e.preventDefault(); selectPartner(item.getAttribute("data-pick")); });
+    });
+  }
+  function selectPartner(pid) {
+    const p = getPartner(pid);
+    if (!p) return;
+    pHidden().value = pid;
+    pSearch().value = p.name;
+    pList().style.display = "none";
+    pHidden().dispatchEvent(new Event("change")); // 단가 재적용 리스너
+    refreshBalance();
+  }
+  /** 전잔금 패널: 날짜 이전 미수 + 이번 거래 합계 = 총미수 (매출만) */
+  function refreshBalance() {
+    const box = overlay.querySelector("#trf-balance");
+    if (!box) return;
+    const pid = pHidden().value;
+    if (!pid || !getPartner(pid)) { box.style.display = "none"; return; }
+    const date = overlay.querySelector("#trf-date").value || today();
+    const prev = partnerBalanceBefore(pid, date, "sales") - (rec ? Number(rec.total) || 0 : 0) * (rec && rec.date < date ? 1 : 0);
+    const cur = calcAmounts(lines).total;
+    box.style.display = "";
+    box.innerHTML = "<b>" + esc(getPartner(pid).name) + "</b> · 전잔금 <b>" + fmtMoney(prev) + "</b>원 + 이번 거래 <b>" + fmtMoney(cur) + "</b>원 = 총미수 " +
+      '<b style="font-size:15px;color:var(--danger)">' + fmtMoney(prev + cur) + "</b>원" +
+      ' <span class="sub">(전잔금 = ' + esc(date) + " 이전 미수 잔액 · 기초이월 포함)</span>";
+  }
 
   /** 줄 데이터 다시 그리기 (셀렉트/입력 유지 어려우므로 tbody만 갱신) */
   function refreshLines() {
     overlay.querySelector("#trf-lines tbody").innerHTML = linesHTML();
     overlay.querySelector("#trf-totals").innerHTML = totalsHTML();
     bindLineEvents();
+    refreshBalance();
   }
 
   // 거래처 변경 → 품목 연결된 줄의 단가를 그 거래처 기준(도매/소매)으로 다시 적용 (매출만)
@@ -352,6 +417,7 @@ function tradeForm(kind, id) {
           // 금액 칸·합계만 갱신 (입력 포커스 유지)
           overlay.querySelector('[data-amount="' + i + '"]').textContent = fmtMoney((lines[i].qty || 0) * (lines[i].unitPrice || 0));
           overlay.querySelector("#trf-totals").innerHTML = totalsHTML();
+          refreshBalance();
         });
       });
     });
@@ -373,14 +439,64 @@ function tradeForm(kind, id) {
   overlay.querySelector("#trf-vatmode").addEventListener("change", (e) => {
     vatMode = e.target.value;
     overlay.querySelector("#trf-totals").innerHTML = totalsHTML();
+    refreshBalance();
   });
+  // 거래처 검색 입력 동작
+  pSearch().addEventListener("input", () => { pHidden().value = ""; renderPartnerList(pSearch().value); refreshBalance(); });
+  pSearch().addEventListener("focus", () => renderPartnerList(pSearch().value));
+  pSearch().addEventListener("blur", () => setTimeout(() => { pList().style.display = "none"; }, 150));
+  pSearch().addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { // Enter = 첫 번째 검색 결과 선택
+      e.preventDefault();
+      const first = pList().querySelector("[data-pick]");
+      if (first) selectPartner(first.getAttribute("data-pick"));
+    }
+    if (e.key === "Escape") pList().style.display = "none";
+  });
+  overlay.querySelector("#trf-date").addEventListener("change", refreshBalance);
+  refreshBalance();
 
   overlay.addEventListener("click", (e) => {
     const act = e.target.getAttribute && e.target.getAttribute("data-act");
     if (e.target === overlay || act === "cancel") { overlay.remove(); return; }
-    if (act === "save") {
+    // 저장 전 명세서 미리보기 — 장부에 아무것도 기록하지 않고 인쇄 모양만 보여준다
+    if (act === "preview") {
+      const pid = pHidden().value;
+      if (!pid || !getPartner(pid)) { toast("거래처를 먼저 선택하세요.", "error"); return; }
+      const pl = lines.map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
+        .filter((l) => l.name && l.qty !== 0);
+      if (!pl.length) { toast("품목을 1줄 이상 입력하세요.", "error"); return; }
+      const date = overlay.querySelector("#trf-date").value || today();
+      const prev = partnerBalanceBefore(pid, date, "sales");
+      const dayTotal = calcAmounts(pl).total;
+      const temp = { type: "statement", no: "(미발행)", date, partnerId: pid, lines: pl, discountRate: 0, showVat: false,
+        twoCopies: state.prefs.defTwoCopies !== false, settle: { prevBalance: prev, dayTotal, sum: prev + dayTotal, paid: 0, balance: prev + dayTotal } };
+      const pv = document.createElement("div");
+      pv.className = "modal-overlay";
+      pv.innerHTML = '<div class="modal-box" style="max-width:1150px;max-height:92vh;display:flex;flex-direction:column">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><h3>거래명세서 미리보기 (아직 저장 안 됨)</h3>' +
+        '<span class="sub">저장하면 이 내용으로 매출이 등록되고, [저장 후 명세서 인쇄]를 누르면 명세서까지 발행됩니다.</span>' +
+        '<span style="flex:1"></span><button class="btn" data-pv="close">닫고 수정</button>' +
+        '<button class="btn btn-primary" data-pv="save">저장</button>' +
+        (!rec ? '<button class="btn btn-primary" data-pv="saveprint">🖨 저장 후 명세서 인쇄</button>' : "") + "</div>" +
+        '<div style="overflow:auto;background:#888;padding:14px;border-radius:8px"><div style="background:#fff;color:#000;padding:10px;min-width:1050px">' +
+        statementPrintHTML(temp) + "</div></div></div>";
+      pv.addEventListener("click", (ev) => {
+        const a = ev.target.getAttribute && ev.target.getAttribute("data-pv");
+        if (ev.target === pv || a === "close") { pv.remove(); return; }
+        if (a === "save" || a === "saveprint") { pv.remove(); doSave(a === "saveprint"); }
+      });
+      document.body.appendChild(pv);
+      return;
+    }
+    if (act === "save" || act === "saveprint") doSave(act === "saveprint");
+  });
+
+  /** 저장 실행. printAfter=true 면 저장 직후 명세서를 발행하고 인쇄 미리보기를 연다 */
+  function doSave(printAfter) {
+    {
       const partnerId = overlay.querySelector("#trf-partner").value;
-      if (!partnerId) { toast("거래처를 선택하세요.", "error"); return; }
+      if (!partnerId || !getPartner(partnerId)) { toast("거래처를 검색해 목록에서 선택하세요.", "error"); return; }
       const cleanLines = lines
         .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
         .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력
@@ -408,9 +524,10 @@ function tradeForm(kind, id) {
       overlay.remove();
       renderApp();
       toast(cfg.label + (id ? "을(를) 수정했습니다." : "이(가) 등록되었습니다."), "success");
-      if (toStmt && toStmt.checked && !rec) openStatementForSale(savedRec.id);
+      if (printAfter && !rec) issueStatementForSale(savedRec.id);
+      else if (toStmt && toStmt.checked && !rec) openStatementForSale(savedRec.id);
     }
-  });
+  }
   document.body.appendChild(overlay);
 }
 

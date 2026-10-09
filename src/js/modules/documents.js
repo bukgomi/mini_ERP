@@ -96,6 +96,43 @@ function nextDocNo(type) {
 }
 
 /** 매출 건에서 거래명세서 발행 (매출 목록 [명세서] 버튼) */
+/**
+ * 매출 건으로 거래명세서를 폼 없이 바로 발행하고 인쇄 미리보기를 연다 (매출 등록 → [저장 후 인쇄])
+ * 정산값은 발행 시점 장부 기준으로 자동 계산해 고정 저장한다 (SPEC 12.4)
+ */
+function issueStatementForSale(saleId) {
+  const sale = getSale(saleId);
+  if (!sale) return null;
+  const exist = state.documents.find((d) => d.type === "statement" && d.saleId === saleId);
+  if (exist) { printDocument(exist.id); return exist; }
+  const lines = sale.lines.map((l) => {
+    const item = l.itemId ? getItem(l.itemId) : null;
+    return { name: l.name, spec: l.spec || (item ? item.spec : "") || "", qty: l.qty, unitPrice: l.unitPrice, note: "" };
+  });
+  const showVat = !!state.prefs.defShowVat;
+  const dayTotal = stmtAmounts(lines, 0, showVat).total;
+  const prevBalance = partnerBalanceBefore(sale.partnerId, sale.date, "sales");
+  let dayPaid = 0;
+  state.sales.forEach((s) => {
+    if (s.partnerId !== sale.partnerId) return;
+    (s.payments || []).forEach((pm) => { if (pm.date === sale.date) dayPaid += Number(pm.amount) || 0; });
+  });
+  const p = getPartner(sale.partnerId);
+  ((p && p.openingPayments) || []).forEach((x) => { if (x.kind === "수금" && x.date === sale.date) dayPaid += Number(x.amount) || 0; });
+  const doc = {
+    id: uid("d"), no: nextDocNo("statement"), type: "statement",
+    date: sale.date, partnerId: sale.partnerId, lines,
+    discountRate: 0, showVat, memo: sale.memo || "",
+    twoCopies: state.prefs.defTwoCopies !== false, saleId: sale.id,
+    settle: { prevBalance, dayTotal, sum: prevBalance + dayTotal, paid: dayPaid, balance: prevBalance + dayTotal - dayPaid }
+  };
+  state.documents.push(doc);
+  state.seq.statement++;
+  markDirty();
+  printDocument(doc.id);
+  return doc;
+}
+
 function openStatementForSale(saleId) {
   if (guardReadOnly()) return;
   const sale = getSale(saleId);
@@ -237,7 +274,7 @@ function documentForm(type, docId, saleId) {
   function renderPartnerList(q) {
     q = (q || "").trim().toLowerCase();
     const matches = state.partners
-      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.bizNumber || "").replace(/-/g, "").includes(q.replace(/-/g, "")))
+      .filter((p) => partnerMatches(p, q)) // 공백 무시·초성·입금자명까지 유사 검색
       .slice(0, 30); // 너무 길면 30곳까지만 (검색어를 더 입력하도록)
     listEl().innerHTML = matches.length
       ? matches.map((p) => {
@@ -697,6 +734,7 @@ function statementPrintHTML(d) {
     ".stmt-sub{text-align:center;font-size:" + (L ? "15px" : "13px") + ";letter-spacing:5px;margin-bottom:5px}" +
     ".stmt-num{text-align:right;font-variant-numeric:tabular-nums}" +
     ".stmt-dash{color:#888}" +
+    ".stmt-copy td:nth-child(2){word-break:keep-all}" +   // 규격은 토큰(1/32-4#) 중간에서 줄이 끊기지 않게
     "</style>";
 
   const pageHTML = pages.map((pageLines, pi) => {
@@ -759,7 +797,7 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
     '<td style="font-size:' + (state.prefs.printFont === "large" ? "17px" : "15px") + '"><b>' + fmtMoney(st.dayTotal) + " 원정</b></td></tr></table>" +
 
     // 품목 표: 품명|규격|수량|단가|공급가액|기타(세액 표시 켜면 마지막 열이 세액)
-    "<table><colgroup><col style='width:28%'><col style='width:14%'><col style='width:10%'><col style='width:14%'><col style='width:18%'><col style='width:16%'></colgroup>" +
+    "<table><colgroup><col style='width:25%'><col style='width:19%'><col style='width:9%'><col style='width:13%'><col style='width:18%'><col style='width:16%'></colgroup>" +
     "<thead><tr><th>품 명</th><th>규 격</th><th>수 량</th><th>단 가</th><th>공급가액</th><th>" + (showVat ? "세 액" : "기 타") + "</th></tr></thead>" +
     "<tbody>" + rows +
     (isLast ?

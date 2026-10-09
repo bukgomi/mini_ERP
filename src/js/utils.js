@@ -97,6 +97,32 @@ function moneyToKorean(n) {
 }
 
 /** 토스트 메시지 표시 (성공/실패 피드백) */
+/** 한글 문자열의 초성만 뽑기 ("스타피싱" → "ㅅㅌㅍㅅ"). 한글이 아닌 글자는 그대로 둔다 */
+function chosung(str) {
+  const CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+  return String(str || "").split("").map((ch) => {
+    const code = ch.charCodeAt(0) - 0xac00;
+    return code >= 0 && code < 11172 ? CHO[Math.floor(code / 588)] : ch;
+  }).join("");
+}
+
+/**
+ * 거래처 유사 검색 — 공백·대소문자 무시 부분 일치, 초성 검색("ㅅㅌ" → 스타피싱),
+ * 사업자번호·메모의 입금자명도 함께 본다. 빈 검색어는 전부 일치
+ */
+function partnerMatches(p, q) {
+  q = String(q || "").replace(/\s+/g, "").toLowerCase();
+  if (!q) return true;
+  const name = String(p.name || "").replace(/\s+/g, "").toLowerCase();
+  if (name.includes(q)) return true;
+  if (/^[ㄱ-ㅎ]+$/.test(q) && chosung(name).includes(q)) return true;
+  if (chosung(name).includes(chosung(q)) && /[ㄱ-ㅎ]/.test(q)) return true;
+  const biz = String(p.bizNumber || "").replace(/-/g, "");
+  if (biz && biz.includes(q.replace(/-/g, ""))) return true;
+  const memo = String(p.memo || "").replace(/\s+/g, "").toLowerCase();
+  return !!memo && memo.includes(q);
+}
+
 function toast(msg, type) {
   const wrap = document.getElementById("toast-wrap");
   if (!wrap) return;
