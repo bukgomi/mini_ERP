@@ -696,6 +696,7 @@ function statementPrintHTML(d) {
     ".stmt-title{text-align:center;font-size:" + (L ? "24px" : "21px") + ";font-weight:700;letter-spacing:8px;margin:2px 0}" +
     ".stmt-sub{text-align:center;font-size:" + (L ? "15px" : "13px") + ";letter-spacing:5px;margin-bottom:5px}" +
     ".stmt-num{text-align:right;font-variant-numeric:tabular-nums}" +
+    ".stmt-dash{color:#888}" +
     "</style>";
 
   const pageHTML = pages.map((pageLines, pi) => {
@@ -729,7 +730,8 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
       "<td" + (showVat ? ' class="stmt-num">' + fmtMoney(Math.round(lineSupply * 0.1)) : ">") + "</td></tr>";
   });
   const rowsPerPage = Math.min(30, Math.max(5, Number(state.prefs.stmtRows) || 12));
-  for (let i = pageLines.length; i < rowsPerPage; i++) rows += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>";
+  for (let i = pageLines.length; i < rowsPerPage; i++)
+    rows += "<tr><td>&nbsp;</td><td></td><td></td><td class='stmt-num stmt-dash'>-</td><td class='stmt-num stmt-dash'>-</td><td></td></tr>";
 
   // 마지막 장에만 계/공제/정산 표시
   const isLast = pageIdx === pageCount - 1;
@@ -761,7 +763,7 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
     "<thead><tr><th>품 명</th><th>규 격</th><th>수 량</th><th>단 가</th><th>공급가액</th><th>" + (showVat ? "세 액" : "기 타") + "</th></tr></thead>" +
     "<tbody>" + rows +
     (isLast ?
-      "<tr><th>계</th><td></td><td class='stmt-num'>" + fmtMoney(sum(d.lines, (l) => l.qty)) + "</td><td></td>" +
+      "<tr><th>계</th><td></td><td></td><td></td>" +
       "<td class='stmt-num'><b>" + fmtMoney(supply) + "</b></td>" +
       "<td class='stmt-num'>" + (showVat ? "<b>" + fmtMoney(a.vat + (discount ? Math.round(discount * 0.1) : 0)) + "</b>" : "") + "</td></tr>" +
       (discount ? "<tr><th>공제(" + d.discountRate + "%)</th><td></td><td></td><td></td><td class='stmt-num'>−" + fmtMoney(discount) + "</td>" +
@@ -771,11 +773,12 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
 
     // 하단 정산: 전잔금 | 합계 | 입금 | 총미수잔액 (발행 시점 고정값)
     (isLast ?
-      '<table style="margin-top:2mm"><tr><th style="width:25%">전잔금</th><th style="width:25%">합 계</th><th style="width:25%">입 금</th><th style="width:25%">총미수잔액</th></tr>' +
-      "<tr><td class='stmt-num'>" + fmtMoney(st.prevBalance) + "</td>" +
-      "<td class='stmt-num'>" + fmtMoney(st.sum) + "</td>" +
-      "<td class='stmt-num'>" + fmtMoney(st.paid) + "</td>" +
-      "<td class='stmt-num'><b>" + fmtMoney(st.balance) + "</b></td></tr></table>"
+      // 사용자 엑셀 양식과 같은 2×2 배치: 전잔금 | 금액 | 합계 | 금액 / 입금 | 금액 | 총미수잔액 | 금액
+      '<table style="margin-top:2mm"><colgroup><col style="width:17%"><col style="width:33%"><col style="width:17%"><col style="width:33%"></colgroup>' +
+      "<tr><th>전잔금</th><td class='stmt-num'>₩" + fmtMoney(st.prevBalance) + "</td>" +
+      "<th>합 계</th><td class='stmt-num'>₩" + fmtMoney(st.sum) + "</td></tr>" +
+      "<tr><th>입 금</th><td class='stmt-num'>" + (st.paid ? "₩" + fmtMoney(st.paid) : "") + "</td>" +
+      "<th>총미수잔액</th><td class='stmt-num'><b>₩" + fmtMoney(st.balance) + "</b></td></tr></table>"
       : "") +
     "</div>";
 }
