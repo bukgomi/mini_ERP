@@ -76,7 +76,9 @@ function tradeTableHTML(kind, list) {
 function salesListBookHTML() {
   const ev = salesBookEvents();
   const won = (n) => fmtMoney(n);
-  const rows = ev.map((e) => {
+  // 누계는 날짜순으로 계산됐고, 표시는 최근 줄이 위로 (방금 적은 줄이 입력 줄 바로 아래에 보이도록)
+  const shown = bookNewestFirst ? ev.slice().reverse() : ev;
+  const rows = shown.map((e) => {
     if (e.t === "pay") {
       return '<tr style="color:#c2185b">' +
         '<td style="white-space:nowrap">' + esc(e.date) + "</td>" +
@@ -117,7 +119,7 @@ function salesListBookHTML() {
   }).join("");
   const totSale = sum(ev.filter((e) => e.t === "trade" && !e.mall), (e) => e.amount);
   const totPay = sum(ev.filter((e) => e.t === "pay"), (e) => e.amount);
-  return '<div class="table-wrap"><table class="grid">' +
+  return '<div class="table-wrap book-scroll"><table class="grid">' +
     "<thead><tr><th>날짜</th><th>거래처</th><th>품목 / 입금 내역</th>" +
     '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th>' +
     '<th class="num">전잔금</th><th class="num">입금</th><th class="num">총미수</th>' +
@@ -135,7 +137,7 @@ function salesListEntryRowHTML() {
   const inp = (f, ph, cls) => '<input type="text" data-be="' + f + '" placeholder="' + ph + '" value="' + esc(d[f] || "") + '" class="' + (cls || "") + '" autocomplete="off" style="font-size:12.5px;padding:4px 6px">';
   return '<tr class="book-entry" style="background:var(--bg)">' +
     '<td><input type="date" data-be="date" value="' + esc(d.date) + '" style="font-size:12px;padding:4px"></td>' +
-    '<td style="position:relative">' + inp("partnerName", "거래처 (일부·초성)") + '<div class="combo-list" id="be-partner-list" style="display:none;min-width:280px;white-space:nowrap;z-index:20"></div></td>' +
+    '<td><div style="position:relative">' + inp("partnerName", "거래처 (일부·초성)") + '<div class="combo-list" id="be-partner-list" style="display:none;min-width:280px;white-space:nowrap;z-index:20"></div></div></td>' +
     "<td>" + inp("desc", "품목·내역 / 입금 적요") + "</td>" +
     '<td colspan="2"><select data-be="bank" style="font-size:12px;padding:4px">' + BOOK_BANKS.map((b) => '<option value="' + b + '"' + (d.bank === b ? " selected" : "") + ">" + (b || "(입금은행)") + "</option>").join("") + "</select></td>" +
     "<td>" + inp("sale", "매출 (반품 -)", "num") + "</td>" +
@@ -193,9 +195,11 @@ function renderTradeList(kind, el) {
     '<input type="date" id="tf-to" value="' + esc(f.to) + '">' +
     // 기간 빠른 선택 (이번 달 / 지난 달 / 올해 / 작년 / 전체)
     '<span style="display:flex;gap:4px">' +
-    ["이번 달", "지난 달", "올해", "작년", "전체"].map((t) =>
+    ["오늘", "이번 달", "지난 달", "올해", "작년", "전체"].map((t) =>
       '<button class="btn btn-sm" data-range="' + t + '">' + t + "</button>").join("") +
     "</span>" +
+    (kind === "sales" && tradeView.sales !== "balance" ?
+      '<label style="display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" id="tf-newest"' + (bookNewestFirst ? " checked" : "") + ' style="width:auto"> 최근 줄 위로</label>' : "") +
     '<select id="tf-partner"><option value="">전체 거래처</option>' +
     state.partners.map((p) => '<option value="' + p.id + '"' + (f.partnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
     "</select>" +
@@ -226,6 +230,7 @@ function renderTradeList(kind, el) {
     const y = now.getFullYear();
     const pad = (n) => String(n).padStart(2, "0");
     switch (b.getAttribute("data-range")) {
+      case "오늘": f.from = today(); f.to = today(); break;
       case "이번 달": f.from = monthStart(); f.to = monthEnd(); break;
       case "지난 달": {
         const d = new Date(y, now.getMonth() - 1, 1);           // 지난달 1일
@@ -241,6 +246,8 @@ function renderTradeList(kind, el) {
     renderApp();
   }));
   el.querySelector("#tf-partner").addEventListener("change", (e) => { f.partnerId = e.target.value; renderApp(); });
+  const newestChk = el.querySelector("#tf-newest");
+  if (newestChk) newestChk.addEventListener("change", (e) => { bookNewestFirst = e.target.checked; renderApp(); });
   // 검색: 화면 전체를 다시 그리지 않고 표만 부분 갱신
   // (전체 재렌더 시 입력칸이 새로 만들어져 한글 조합(IME)이 끊기는 버그 방지)
   el.querySelector("#tf-search").addEventListener("input", (e) => {
@@ -1061,7 +1068,8 @@ function salesBookEvents(opts) {
 /** 장부 표 HTML */
 function salesBookHTML(ev, compact) {
   const won = (n) => "₩" + fmtMoney(n);
-  const rows = ev.map((e) => {
+  const shown = !compact && bookNewestFirst ? ev.slice().reverse() : ev;
+  const rows = shown.map((e) => {
     const isPay = e.t === "pay";
     const neg = e.t === "trade" && e.amount < 0;
     const style = isPay ? "color:#c2185b" : neg ? "color:var(--danger)" : "";
@@ -1088,7 +1096,7 @@ function salesBookHTML(ev, compact) {
   const totSale = sum(ev.filter((e) => e.t === "trade" && !e.mall), (e) => e.amount);
   const totPay = sum(ev.filter((e) => e.t === "pay"), (e) => e.amount);
   const totMall = sum(ev.filter((e) => e.t === "trade" && e.mall), (e) => e.amount);
-  return '<div class="table-wrap"><table class="grid" style="font-size:12.5px;table-layout:fixed;width:' + (compact ? "1160px" : "1310px") + '">' +
+  return '<div class="table-wrap' + (compact ? "" : " book-scroll") + '"><table class="grid" style="font-size:12.5px;table-layout:fixed;width:' + (compact ? "1160px" : "1310px") + '">' +
     "<colgroup><col style='width:86px'><col style='width:122px'><col style='width:140px'><col style='width:184px'><col style='width:100px'><col style='width:100px'><col style='width:100px'><col style='width:108px'><col style='width:150px'><col style='width:70px'>" + (compact ? "" : "<col style='width:150px'>") + "</colgroup>" +
     "<thead><tr><th>입금은행</th><th>날짜</th><th>거래처</th><th>매출&반품내역</th>" +
     '<th class="num">매출&반품</th><th class="num">전잔</th><th class="num">입금액</th><th class="num">합계(총미수)</th>' +
@@ -1220,6 +1228,7 @@ function exportBalanceXlsx(rows, f) {
  * ============================================================ */
 const BOOK_BANKS = ["", "기업-425", "농협-301", "현금", "가계수표", "어음", "카드", "기타"];
 let bookEntryDraft = { bank: "", date: "", partnerId: "", partnerName: "", desc: "", sale: "", pay: "", memo: "", mall: "" };
+let bookNewestFirst = true; // 목록·장부: 최근 줄을 위로 (끄면 엑셀처럼 날짜순)
 
 function bookEntryRowHTML() {
   const d = bookEntryDraft;
@@ -1228,7 +1237,7 @@ function bookEntryRowHTML() {
   return '<tr class="book-entry" style="background:var(--bg)">' +
     '<td><select data-be="bank" style="font-size:12px;padding:4px">' + BOOK_BANKS.map((b) => '<option value="' + b + '"' + (d.bank === b ? " selected" : "") + ">" + (b || "(은행)") + "</option>").join("") + "</select></td>" +
     '<td><input type="date" data-be="date" value="' + esc(d.date) + '" style="font-size:12px;padding:4px"></td>' +
-    '<td style="position:relative">' + inp("partnerName", "거래처 (일부·초성)") + '<div class="combo-list" id="be-partner-list" style="display:none;min-width:280px;white-space:nowrap;z-index:20"></div></td>' +
+    '<td><div style="position:relative">' + inp("partnerName", "거래처 (일부·초성)") + '<div class="combo-list" id="be-partner-list" style="display:none;min-width:280px;white-space:nowrap;z-index:20"></div></div></td>' +
     "<td>" + inp("desc", "매출&반품내역 / 입금 적요") + "</td>" +
     "<td>" + inp("sale", "매출 (반품은 -)", "num") + "</td>" +
     '<td class="num sub">자동</td>' +
@@ -1243,6 +1252,10 @@ function bookEntryRowHTML() {
 function bindBookEntry(el) {
   const row = el.querySelector(".book-entry");
   if (!row) return;
+  // 머리글 바로 아래에 고정 (머리글 높이만큼 내려서 붙임)
+  const thead = row.closest("table") && row.closest("table").querySelector("thead");
+  const topPx = thead ? thead.getBoundingClientRect().height : 38;
+  row.querySelectorAll("td").forEach((td) => { td.style.top = topPx + "px"; });
   const d = bookEntryDraft;
   row.querySelectorAll("[data-be]").forEach((inp) => {
     const f = inp.getAttribute("data-be");
