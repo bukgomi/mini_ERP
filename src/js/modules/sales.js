@@ -206,12 +206,20 @@ function tradeRowHTML(kind, r) {
     '<td class="num">' + fmtMoney(r.vat) + "</td>" +
     '<td class="num"><b>' + fmtMoney(r.total) + "</b></td>" +
     (kind === "sales" ? (function () {
-      // 전잔금 = 이 매출 날짜 이전의 거래처 미수 잔액(기초이월 포함), 입금 = 이 건에 배분된 수금, 총미수 = 전잔금 + 합계 − 입금
+      // 엑셀 장부 규칙: 입금은 특정 매출 건이 아니라 거래처 미수 잔액에서 빠진다
+      // 전잔금 = 이 날짜 이전 거래처 미수 잔액(기초이월 포함) / 입금 = 이 거래처가 이 날짜에 입금한 금액 / 총미수 = 전잔금 + 이 날 매출 − 입금
       const prev = partnerBalanceBefore(r.partnerId, r.date, "sales");
-      const paid = paidAmount(r);
+      let dayPaid = 0, daySales = 0;
+      state.sales.forEach((s) => {
+        if (s.partnerId !== r.partnerId) return;
+        if (s.date === r.date) daySales += Number(s.total) || 0;
+        (s.payments || []).forEach((pm) => { if (pm.date === r.date) dayPaid += Number(pm.amount) || 0; });
+      });
+      const pp = getPartner(r.partnerId);
+      ((pp && pp.openingPayments) || []).forEach((x) => { if (x.kind === "수금" && x.date === r.date) dayPaid += Number(x.amount) || 0; });
       return '<td class="num" style="color:#1565c0">' + fmtMoney(prev) + "</td>" +
-        '<td class="num" style="color:#c2185b">' + (paid ? fmtMoney(paid) : "") + "</td>" +
-        '<td class="num"><b>' + fmtMoney(prev + (Number(r.total) || 0) - paid) + "</b></td>";
+        '<td class="num" style="color:#c2185b">' + (dayPaid ? fmtMoney(dayPaid) : "") + "</td>" +
+        '<td class="num"><b>' + fmtMoney(prev + daySales - dayPaid) + "</b></td>";
     })() : "") +
     '<td class="num">' + (unpaid > 0 ? '<b style="color:var(--danger)">' + fmtMoney(unpaid) + "</b>"
       : unpaid < 0 ? '<b style="color:var(--accent)">' + fmtMoney(unpaid) + "</b>" : "0") + "</td>" +
