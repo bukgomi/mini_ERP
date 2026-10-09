@@ -280,6 +280,19 @@ function tradeForm(kind, id) {
     bindLineEvents();
   }
 
+  // 거래처 변경 → 품목 연결된 줄의 단가를 그 거래처 기준(도매/소매)으로 다시 적용 (매출만)
+  if (kind === "sales" && state.useWholesale) {
+    overlay.querySelector("#trf-partner").addEventListener("change", (e) => {
+      const p = getPartner(e.target.value);
+      let changed = 0;
+      lines.forEach((ln) => {
+        const it = ln.itemId ? getItem(ln.itemId) : null;
+        if (it && ln.unitPrice !== sellPriceOf(it, p)) { ln.unitPrice = sellPriceOf(it, p); changed++; }
+      });
+      if (changed) { refreshLines(); toast((p ? p.name : "거래처") + " — " + priceTierOf(p) + "가로 " + changed + "줄 단가를 다시 적용했습니다.", "info"); }
+    });
+  }
+
   function bindLineEvents() {
     // 품목 선택 → 단가 자동 입력
     overlay.querySelectorAll('[data-lf="itemId"]').forEach((sel) => {
@@ -290,7 +303,8 @@ function tradeForm(kind, id) {
         if (item) {
           lines[i].name = item.name;
           // 매출 = 판매 단가(도매 모드면 도매가), 매입 = 매입가 자동
-          lines[i].unitPrice = kind === "sales" ? sellPriceOf(item) : (Number(item.costPrice) || 0);
+          const curPartner = getPartner(overlay.querySelector("#trf-partner").value);
+          lines[i].unitPrice = kind === "sales" ? sellPriceOf(item, curPartner) : (Number(item.costPrice) || 0);
         }
         refreshLines();
       });

@@ -265,6 +265,15 @@ function documentForm(type, docId, saleId) {
     searchInput().value = p.name;
     listEl().style.display = "none";
     refreshSettle(true); // 전잔금·입금 자동 채움
+    // 거래처가 바뀌면 등록 품목과 이름이 같은 줄의 단가를 그 거래처 기준(도매/소매)으로 다시 맞춘다
+    if (state.useWholesale) {
+      let changed = 0;
+      lines.forEach((ln) => {
+        const it = ln.name ? state.items.find((x) => x.name === ln.name) : null;
+        if (it && ln.unitPrice !== sellPriceOf(it, p)) { ln.unitPrice = sellPriceOf(it, p); changed++; }
+      });
+      if (changed) { refreshLines(); toast(p.name + " — " + priceTierOf(p) + "가로 " + changed + "줄 단가를 다시 적용했습니다.", "info"); }
+    }
   }
 
   /* ---------- 정산 미리보기 (거래명세서 전용) ----------
@@ -328,7 +337,7 @@ function documentForm(type, docId, saleId) {
         list.innerHTML = matches.map((it) =>
           '<div class="combo-item" data-ipick="' + it.id + '"><span><b>' + esc(it.name) + "</b>" +
           (it.spec ? ' <span class="ci-sub">' + esc(it.spec) + "</span>" : "") + "</span>" +
-          '<span class="ci-sub">' + fmtMoney(sellPriceOf(it)) + "원" + (state.useWholesale ? " (도매)" : "") + "</span></div>").join("");
+          '<span class="ci-sub">' + fmtMoney(sellPriceOf(it, getPartner(selPartnerId))) + "원" + (state.useWholesale ? " (" + priceTierOf(getPartner(selPartnerId)) + ")" : "") + "</span></div>").join("");
         list.style.display = "block";
         // mousedown: blur보다 먼저 처리되어 클릭이 씹히지 않음
         list.querySelectorAll("[data-ipick]").forEach((item) => {
@@ -338,7 +347,7 @@ function documentForm(type, docId, saleId) {
             if (!it) return;
             lines[i].name = it.name;
             if (!lines[i].spec) lines[i].spec = it.spec || "";
-            lines[i].unitPrice = sellPriceOf(it); // 품목 선택 = 단가 자동 (도매 모드면 도매가 — VLOOKUP의 도매가 동작)
+            lines[i].unitPrice = sellPriceOf(it, getPartner(selPartnerId)); // 품목 선택 = 단가 자동 (거래처가 소매 지정이면 소매가, 아니면 도매가)
             refreshLines();
             const qtyInp = overlay.querySelector('[data-df="qty"][data-i="' + i + '"]');
             if (qtyInp) { qtyInp.focus(); qtyInp.select(); }
@@ -387,7 +396,7 @@ function documentForm(type, docId, saleId) {
         if (f === "name") {
           const item = state.items.find((it) => it.name === inp.value);
           if (item && !lines[i].unitPrice) {
-            lines[i].unitPrice = sellPriceOf(item); // 도매 모드면 도매가
+            lines[i].unitPrice = sellPriceOf(item, getPartner(selPartnerId)); // 거래처 적용 단가 기준
             lines[i].spec = lines[i].spec || item.spec || "";
             refreshLines();
             return;

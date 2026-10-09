@@ -94,10 +94,18 @@ function migrateState(raw) {
  * 문서·매출에 적용할 판매 단가
  * 도매 모드 켬: 도매가 우선 (없으면 소매가) / 끔: 판매가(=salePrice) 그대로
  */
-function sellPriceOf(item) {
+function sellPriceOf(item, partner) {
   if (!item) return 0;
-  if (state.useWholesale) return Number(item.wholesalePrice) || Number(item.salePrice) || 0;
+  // 거래처별 적용 단가: 소매(소비자·위탁몰 등)로 지정된 거래처는 도매 모드여도 소매가(판매가)
+  if (state.useWholesale && !(partner && partner.priceTier === "소매"))
+    return Number(item.wholesalePrice) || Number(item.salePrice) || 0;
   return Number(item.salePrice) || 0;
+}
+
+/** 거래처에 적용되는 단가 종류 표시용 ("도매" | "소매"). 도매 모드가 꺼져 있으면 항상 "소매" */
+function priceTierOf(partner) {
+  if (!state.useWholesale) return "소매";
+  return partner && partner.priceTier === "소매" ? "소매" : "도매";
 }
 
 function getPartner(id) { return state.partners.find((p) => p.id === id) || null; }

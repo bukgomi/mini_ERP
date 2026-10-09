@@ -21,7 +21,8 @@ function partnerTableHTML(list) {
     (list.length ? list.map((p) => {
       const bal = partnerBalance(p.id, "sales");
       return "<tr>" +
-        '<td><a href="#" data-detail="' + p.id + '"><b>' + esc(p.name) + "</b></a></td>" +
+        '<td><a href="#" data-detail="' + p.id + '"><b>' + esc(p.name) + "</b></a>" +
+        (state.useWholesale && p.priceTier === "소매" ? ' <span class="badge orange">소매가</span>' : "") + "</td>" +
         "<td>" + typeBadge(p.type) + "</td>" +
         "<td>" + esc(p.bizNumber) + "</td>" +
         "<td>" + esc(p.ceo) + "</td>" +
@@ -128,7 +129,7 @@ function partnerDetailHTML(p) {
 /** 거래처 등록/수정 폼 (모달) */
 function partnerForm(id) {
   if (guardReadOnly()) return;
-  const p = id ? getPartner(id) : { name: "", type: "매출처", bizNumber: "", ceo: "", phone: "", email: "", address: "", openingBalance: 0, memo: "" };
+  const p = id ? getPartner(id) : { name: "", type: "매출처", bizNumber: "", ceo: "", phone: "", email: "", address: "", openingBalance: 0, memo: "", priceTier: "" };
   if (!p) return;
 
   const overlay = document.createElement("div");
@@ -148,6 +149,12 @@ function partnerForm(id) {
     '<div class="form-field"><label>기초 이월 잔액 (미수금 +, 미지급금 −)</label>' +
     '<input type="text" class="num" id="pf-ob" value="' + fmtMoney(p.openingBalance || 0) + '"></div>' +
     '<div class="form-field"><label>메모</label><input type="text" id="pf-memo" value="' + esc(p.memo) + '"></div>' +
+    // 거래처별 적용 단가 — 도매 모드(설정 → 판매 단가 설정)에서만 의미가 있다
+    (state.useWholesale ?
+      '<div class="form-field"><label>적용 단가 <span class="sub">(매출·명세서 자동 단가)</span></label><select id="pf-tier">' +
+      '<option value=""' + (p.priceTier === "소매" ? "" : " selected") + ">도매가 (기본)</option>" +
+      '<option value="소매"' + (p.priceTier === "소매" ? " selected" : "") + ">소매가 — 소비자·위탁몰 등</option>" +
+      "</select></div>" : "") +
     "</div>" +
     '<div class="modal-btns" style="margin-top:16px">' +
     '<button class="btn" data-act="cancel">취소</button>' +
@@ -168,7 +175,9 @@ function partnerForm(id) {
         email: overlay.querySelector("#pf-email").value.trim(),
         address: overlay.querySelector("#pf-addr").value.trim(),
         openingBalance: parseMoney(overlay.querySelector("#pf-ob").value),
-        memo: overlay.querySelector("#pf-memo").value.trim()
+        memo: overlay.querySelector("#pf-memo").value.trim(),
+        // 도매 모드가 꺼져 있어 셀렉트가 없으면 기존 값 유지
+        priceTier: overlay.querySelector("#pf-tier") ? overlay.querySelector("#pf-tier").value : (p.priceTier || "")
       };
       if (id) Object.assign(getPartner(id), data);
       else state.partners.push(Object.assign({ id: uid("p") }, data));
@@ -194,14 +203,15 @@ const PARTNER_XLSX_COLS = [
   ["이메일", "email", false],
   ["주소", "address", false],
   ["기초이월잔액", "openingBalance", false], // 미수금 +, 미지급금 −
-  ["메모", "memo", false]
+  ["메모", "memo", false],
+  ["적용단가", "priceTier", false]       // 비우면 도매가, "소매"면 소매가 (도매 모드에서만 사용)
 ];
 
 /** 업로드용 엑셀 양식 내려받기 (헤더 + 예시 1줄) */
 function downloadPartnerTemplate() {
   downloadXlsx("거래처_업로드양식.xlsx", [
     PARTNER_XLSX_COLS.map((c) => c[0]),
-    ["예시상사", "매출처", "123-45-67890", "홍길동", "02-1234-5678", "hong@example.com", "서울시 중구 example로 1", 500000, "예시 줄 — 지우고 실제 데이터를 입력하세요"]
+    ["예시상사", "매출처", "123-45-67890", "홍길동", "02-1234-5678", "hong@example.com", "서울시 중구 example로 1", 500000, "예시 줄 — 지우고 실제 데이터를 입력하세요", ""]
   ], "거래처");
   toast("양식을 내려받았습니다. 예시 줄은 지우고 입력하세요.", "success");
 }
@@ -211,7 +221,7 @@ function exportPartnersXlsx() {
   const header = PARTNER_XLSX_COLS.map((c) => c[0]).concat(["미수금 잔액"]);
   const rows = state.partners.map((p) => [
     p.name || "", p.type || "", p.bizNumber || "", p.ceo || "", p.phone || "",
-    p.email || "", p.address || "", Number(p.openingBalance) || 0, p.memo || "",
+    p.email || "", p.address || "", Number(p.openingBalance) || 0, p.memo || "", p.priceTier || "",
     partnerBalance(p.id, "sales")
   ]);
   downloadXlsx("거래처목록_" + today() + ".xlsx", [header, ...rows], "거래처");
@@ -269,7 +279,8 @@ async function importPartnersFile(file) {
       name, type,
       bizNumber: get("bizNumber"), ceo: get("ceo"), phone: get("phone"),
       email: get("email"), address: get("address"),
-      openingBalance: ob, memo: get("memo")
+      openingBalance: ob, memo: get("memo"),
+      priceTier: /소매/.test(get("priceTier")) ? "소매" : ""
     };
 
     // 파일 내부 중복
