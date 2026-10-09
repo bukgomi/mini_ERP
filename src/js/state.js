@@ -49,6 +49,7 @@ function defaultState() {
       backupKeep: 30,          // 일별 백업 보관 개수
       quoteFooter: "본 견적의 유효기간은 발행일로부터 30일입니다.", // 견적서 하단 문구
       defVatExempt: false,     // 매출·매입 입력 기본: 부가세 미적용 (면세사업자용)
+      defVatIncl: false,       // 매출·매입 입력 기본: 단가에 부가세 포함 (부가세 포함가로 거래하는 도매용)
       aging1: 30, aging2: 60, aging3: 90, // 미수금 연령 구간(일)
       saleToStmt: false        // 매출 저장 후 거래명세서 바로 발행
     }

@@ -129,7 +129,7 @@ function documentForm(type, docId, saleId) {
   let lines = doc ? doc.lines.map((l) => ({ ...l }))
     : sale ? sale.lines.map((l) => {
         const item = l.itemId ? getItem(l.itemId) : null;
-        return { name: l.name, spec: item ? item.spec : "", qty: l.qty, unitPrice: l.unitPrice, note: "" };
+        return { name: l.name, spec: l.spec || (item ? item.spec : "") || "", qty: l.qty, unitPrice: l.unitPrice, note: "" };
       })
     // 새 문서는 기본 5줄로 시작 (한 줄씩 추가하는 불편 제거 — 빈 줄은 저장 시 자동 제외)
     : Array.from({ length: 5 }, () => ({ name: "", spec: "", qty: 1, unitPrice: 0, note: "" }));
@@ -518,7 +518,7 @@ function documentForm(type, docId, saleId) {
           // 품명이 등록 품목과 일치하면 연결 → 재고 연동
           lines: cleanLines.map((l) => {
             const it = state.items.find((x) => x.name === l.name);
-            return { itemId: it ? it.id : "", name: l.name, qty: l.qty, unitPrice: l.unitPrice };
+            return { itemId: it ? it.id : "", name: l.name, spec: l.spec || "", qty: l.qty, unitPrice: l.unitPrice };
           }),
           supply: a.total - a.vat, vat: a.vat, total: a.total,
           vatIncluded: showVat,

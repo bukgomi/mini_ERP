@@ -70,6 +70,7 @@ function renderSettings(el) {
     '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-autosale"' + (state.prefs.defAutoSale ? " checked" : "") + ' style="width:auto"> 명세서 발행 시 매출 자동 등록</label>' +
     '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-tostmt"' + (state.prefs.saleToStmt ? " checked" : "") + ' style="width:auto"> 매출 저장 후 명세서 바로 발행</label>' +
     '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-vatx"' + (state.prefs.defVatExempt ? " checked" : "") + ' style="width:auto"> 매출·매입 기본 부가세 미적용 (면세사업자)</label>' +
+    '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-vatincl"' + (state.prefs.defVatIncl ? " checked" : "") + ' style="width:auto"> 매출·매입 기본 "단가에 부가세 포함" (합계 = 수량×단가, 공급가액은 ÷1.1로 역산)</label>' +
     "</div>" +
     '<div style="margin-top:12px"><button class="btn btn-primary" id="btn-save-prefs">세부 옵션 저장</button></div>' +
     "</details></div>" +
@@ -183,7 +184,8 @@ function renderSettings(el) {
       defShowVat: el.querySelector("#pf-vat").checked,
       defAutoSale: el.querySelector("#pf-autosale").checked,
       saleToStmt: el.querySelector("#pf-tostmt").checked,
-      defVatExempt: el.querySelector("#pf-vatx").checked
+      defVatExempt: el.querySelector("#pf-vatx").checked,
+      defVatIncl: el.querySelector("#pf-vatincl").checked
     };
     // 연령 구간은 오름차순이어야 함
     if (!(state.prefs.aging1 < state.prefs.aging2 && state.prefs.aging2 < state.prefs.aging3)) {

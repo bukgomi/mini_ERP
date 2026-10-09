@@ -206,7 +206,19 @@ function tradeForm(kind, id) {
   const rec = id ? state[cfg.listKey].find((x) => x.id === id) : null;
   // 편집용 사본 라인
   let lines = rec ? rec.lines.map((l) => ({ ...l })) : [{ itemId: "", name: "", qty: 1, unitPrice: 0 }];
-  let vatExempt = rec ? !(rec.vat > 0) && rec.total === rec.supply : !!state.prefs.defVatExempt; // 신규는 세부 옵션 기본값 (면세사업자용)
+  // 부가세 방식 3가지: incl = 단가에 부가세 포함(합계 = 수량×단가, 공급가액 = 합계÷1.1) / excl = 별도 가산 / exempt = 미적용
+  // 수정 시에는 저장된 금액에서 방식을 역추정한다 (엑셀 업로드·명세서 자동 등록 건도 정확히 열리도록)
+  const lineSumOf = (ls) => sum(ls, (l) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
+  let vatMode = rec
+    ? (!(rec.vat > 0) ? "exempt" : (lineSumOf(rec.lines) === Number(rec.total) ? "incl" : "excl"))
+    : (state.prefs.defVatExempt ? "exempt" : (state.prefs.defVatIncl ? "incl" : "excl"));
+  /** 현재 방식으로 공급가액·부가세·합계 계산 */
+  function calcAmounts(ls) {
+    const base = lineSumOf(ls);
+    if (vatMode === "exempt") return { supply: base, vat: 0, total: base };
+    if (vatMode === "incl") { const supply = supplyFromTotal(base); return { supply, vat: base - supply, total: base }; }
+    const vat = calcVat(base); return { supply: base, vat, total: base + vat };
+  }
 
   const useItems = isModuleOn("inventory") && state.items.length > 0;
 
@@ -224,6 +236,9 @@ function tradeForm(kind, id) {
         : "") +
       '<input type="text" data-lf="name" data-i="' + i + '" value="' + esc(ln.name) + '" placeholder="품명"' +
       (useItems && ln.itemId ? ' style="display:none"' : "") + "></td>" +
+      // 규격: 세부 내용(호수·무게·색상 등) 여러 줄 — Alt+Enter로 줄바꿈, 거래명세서에 그대로 인쇄
+      '<td style="width:130px"><textarea data-lf="spec" data-i="' + i + '" rows="1" placeholder="규격" ' +
+      'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.spec || "") + "</textarea></td>" +
       '<td style="width:90px"><input type="text" class="num" data-lf="qty" data-i="' + i + '" value="' + fmtMoney(ln.qty) + '"></td>' +
       '<td style="width:120px"><input type="text" class="num" data-lf="unitPrice" data-i="' + i + '" value="' + fmtMoney(ln.unitPrice) + '"></td>' +
       '<td class="num" style="width:120px" data-amount="' + i + '">' + fmtMoney((ln.qty || 0) * (ln.unitPrice || 0)) + "</td>" +
@@ -232,9 +247,8 @@ function tradeForm(kind, id) {
   }
 
   function totalsHTML() {
-    const supply = sum(lines, (l) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
-    const vat = vatExempt ? 0 : calcVat(supply);
-    return "공급가액 <b>" + fmtMoney(supply) + "</b>원 · 부가세 <b>" + fmtMoney(vat) + "</b>원 · 합계 <b style=\"font-size:16px\">" + fmtMoney(supply + vat) + "</b>원";
+    const a = calcAmounts(lines);
+    return "공급가액 <b>" + fmtMoney(a.supply) + "</b>원 · 부가세 <b>" + fmtMoney(a.vat) + "</b>원 · 합계 <b style=\"font-size:16px\">" + fmtMoney(a.total) + "</b>원";
   }
 
   overlay.innerHTML =
@@ -253,13 +267,15 @@ function tradeForm(kind, id) {
     "</div>" +
 
     '<div style="margin-top:12px"><table class="grid" id="trf-lines"><thead><tr>' +
-    "<th>품목</th><th>수량</th><th>단가</th><th class=\"num\">금액</th><th></th></tr></thead>" +
+    "<th>품목</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">금액</th><th></th></tr></thead>" +
     "<tbody>" + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="trf-addline" style="margin-top:8px">+ 품목 줄 추가</button></div>' +
 
     '<div style="margin-top:12px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">' +
-    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer">' +
-    '<input type="checkbox" id="trf-vatx"' + (vatExempt ? " checked" : "") + " style=\"width:auto\"> 부가세 미적용</label>" +
+    '<label style="display:flex;align-items:center;gap:6px">부가세 <select id="trf-vatmode" style="width:auto">' +
+    [["incl", "단가에 포함 (합계 = 수량×단가)"], ["excl", "별도 가산 (+10%)"], ["exempt", "미적용 (면세)"]]
+      .map(([v, t]) => '<option value="' + v + '"' + (vatMode === v ? " selected" : "") + ">" + t + "</option>").join("") +
+    "</select></label>" +
     // 매출 신규 등록 시: 저장 후 거래명세서 발행으로 바로 이어가기 (명세서 폼이 이 매출 내용으로 채워져 열림)
     (kind === "sales" && !rec && isModuleOn("documents") ?
       '<label style="display:flex;align-items:center;gap:6px;cursor:pointer">' +
@@ -302,6 +318,7 @@ function tradeForm(kind, id) {
         lines[i].itemId = sel.value;
         if (item) {
           lines[i].name = item.name;
+          if (!lines[i].spec) lines[i].spec = item.spec || "";
           // 매출 = 판매 단가(도매 모드면 도매가), 매입 = 매입가 자동
           const curPartner = getPartner(overlay.querySelector("#trf-partner").value);
           lines[i].unitPrice = kind === "sales" ? sellPriceOf(item, curPartner) : (Number(item.costPrice) || 0);
@@ -311,6 +328,21 @@ function tradeForm(kind, id) {
     });
     overlay.querySelectorAll('[data-lf="name"]').forEach((inp) => {
       inp.addEventListener("input", () => { lines[Number(inp.getAttribute("data-i"))].name = inp.value; });
+    });
+    overlay.querySelectorAll('[data-lf="spec"]').forEach((ta) => {
+      const fit = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+      fit();
+      ta.addEventListener("input", () => { lines[Number(ta.getAttribute("data-i"))].spec = ta.value; fit(); });
+      ta.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        if (e.altKey || e.shiftKey) { // Alt+Enter = 칸 안 줄바꿈
+          const pos = ta.selectionStart;
+          ta.value = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+          ta.selectionStart = ta.selectionEnd = pos + 1;
+          lines[Number(ta.getAttribute("data-i"))].spec = ta.value; fit();
+        }
+      });
     });
     ["qty", "unitPrice"].forEach((fld) => {
       overlay.querySelectorAll('[data-lf="' + fld + '"]').forEach((inp) => {
@@ -338,8 +370,8 @@ function tradeForm(kind, id) {
     lines.push({ itemId: "", name: "", qty: 1, unitPrice: 0 });
     refreshLines();
   });
-  overlay.querySelector("#trf-vatx").addEventListener("change", (e) => {
-    vatExempt = e.target.checked;
+  overlay.querySelector("#trf-vatmode").addEventListener("change", (e) => {
+    vatMode = e.target.value;
     overlay.querySelector("#trf-totals").innerHTML = totalsHTML();
   });
 
@@ -350,18 +382,17 @@ function tradeForm(kind, id) {
       const partnerId = overlay.querySelector("#trf-partner").value;
       if (!partnerId) { toast("거래처를 선택하세요.", "error"); return; }
       const cleanLines = lines
-        .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
+        .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0 }))
         .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력
       if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요 (품명·수량 필수). 반품은 수량을 음수(-)로 입력하세요.", "error"); return; }
 
-      const supply = sum(cleanLines, (l) => l.qty * l.unitPrice);
-      const vat = vatExempt ? 0 : calcVat(supply);
+      const { supply, vat, total } = calcAmounts(cleanLines);
       const data = {
         date: overlay.querySelector("#trf-date").value || today(),
         partnerId,
         lines: cleanLines,
-        supply, vat, total: supply + vat,
-        vatIncluded: !vatExempt,
+        supply, vat, total,
+        vatIncluded: vatMode !== "exempt",
         status: overlay.querySelector("#trf-status").value,
         memo: overlay.querySelector("#trf-memo").value.trim()
       };
@@ -416,7 +447,7 @@ function exportTradesXlsx(kind, list) {
       const first = li === 0; // 전표 합계는 첫 줄에만 (엑셀에서 SUM 중복 방지)
       rows.push([
         first ? r.date : "", first ? partnerName(r.partnerId) : "",
-        ln.name || "", item ? item.spec || "" : "",
+        ln.name || "", ln.spec || (item ? item.spec || "" : ""),
         Number(ln.qty) || 0, Number(ln.unitPrice) || 0,
         (Number(ln.qty) || 0) * (Number(ln.unitPrice) || 0),
         first ? Number(r.supply) || 0 : "", first ? Number(r.vat) || 0 : "", first ? Number(r.total) || 0 : "",
