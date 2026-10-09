@@ -55,18 +55,96 @@ function tradeBodyHTML(kind, list) {
   return tradeTableHTML(kind, list);
 }
 
-/** 목록 표 HTML */
+/** 목록 표 HTML — 매출은 장부처럼 입금 줄도 함께(매출 없는 날의 입금도 보임), 매입은 기존 그대로 */
 function tradeTableHTML(kind, list) {
   const cfg = TRADE_CFG[kind];
-  const isSales = kind === "sales";
+  if (kind === "sales") return salesListBookHTML();
   return '<div class="table-wrap"><table class="grid">' +
     "<thead><tr><th>날짜</th><th>거래처</th><th>품목</th>" +
     '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th>' +
-    (isSales ? '<th class="num">전잔금</th><th class="num">입금</th><th class="num">총미수</th>' : "") +
     '<th class="num">' + cfg.unpaidLabel + "</th><th>결제</th><th>상태</th><th></th></tr></thead><tbody>" +
     (list.length ? list.map((r) => tradeRowHTML(kind, r)).join("")
-      : '<tr><td colspan="' + (isSales ? 13 : 10) + '"><div class="empty-msg">기간 내 ' + cfg.label + " 기록이 없습니다.</div></td></tr>") +
+      : '<tr><td colspan="10"><div class="empty-msg">기간 내 ' + cfg.label + " 기록이 없습니다.</div></td></tr>") +
     "</tbody></table></div>";
+}
+
+/**
+ * 매출 목록(기본 화면): 매출 줄 + 입금 줄을 날짜순으로 한 표에
+ *  - 전잔금·총미수는 거래처별 누계 (입금은 특정 매출이 아니라 거래처 미수에서 빠진다 — 엑셀 장부 규칙)
+ *  - 맨 위 입력 줄로 바로 적을 수 있다 (장부 보기와 동일)
+ */
+function salesListBookHTML() {
+  const ev = salesBookEvents();
+  const won = (n) => fmtMoney(n);
+  const rows = ev.map((e) => {
+    if (e.t === "pay") {
+      return '<tr style="color:#c2185b">' +
+        '<td style="white-space:nowrap">' + esc(e.date) + "</td>" +
+        '<td style="min-width:110px"><a href="#" data-book-partner="' + e.pid + '" style="color:inherit;font-weight:600">' + esc(e.pn) + "</a></td>" +
+        "<td>" + esc(e.desc) + (e.bank ? ' <span class="ci-sub">(' + esc(e.bank) + ")</span>" : "") + (e.memo ? ' <span class="badge green">계산서</span> <span class="ci-sub">' + esc(e.memo) + "</span>" : "") + "</td>" +
+        "<td></td><td></td><td></td>" +
+        '<td class="num" style="color:#1565c0">' + won(e.prev) + "</td>" +
+        '<td class="num"><b>' + won(e.amount) + "</b></td>" +
+        '<td class="num"><b style="color:var(--text)">' + won(e.after) + "</b></td>" +
+        '<td></td><td><span class="badge green">입금</span></td><td></td>' +
+        '<td class="actions" style="white-space:nowrap"><button class="btn btn-sm" data-book-paydel="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 삭제</button></td></tr>';
+    }
+    const r = getSale(e.id);
+    if (!r) return "";
+    const ps = payStatus(r);
+    const payBadge = ps === "반품" ? '<span class="badge red">↩ 반품</span>' : ps === "완납" ? '<span class="badge green">완납</span>'
+      : ps === "부분" ? '<span class="badge orange">부분수금</span>' : '<span class="badge red">미수</span>';
+    const unpaid = unpaidAmount(r);
+    return "<tr" + (e.amount < 0 ? ' style="color:var(--danger)"' : "") + ">" +
+      '<td style="white-space:nowrap">' + esc(r.date) + "</td>" +
+      '<td style="min-width:110px"><a href="#" data-book-partner="' + e.pid + '" style="color:inherit;font-weight:600">' + esc(e.pn) + "</a></td>" +
+      "<td>" + esc(e.desc) + (e.memo ? ' <span class="ci-sub">' + esc(e.memo) + "</span>" : "") + "</td>" +
+      '<td class="num">' + won(r.supply) + "</td>" +
+      '<td class="num">' + won(r.vat) + "</td>" +
+      '<td class="num"><b>' + won(r.total) + "</b></td>" +
+      '<td class="num" style="color:#1565c0">' + won(e.prev) + "</td>" +
+      '<td class="num" style="color:#c2185b">' + (e.mall ? won(e.amount) + ' <span class="ci-sub">쇼핑몰</span>' : "") + "</td>" +
+      '<td class="num"><b>' + won(e.after) + "</b></td>" +
+      '<td class="num">' + (unpaid > 0 ? '<b style="color:var(--danger)">' + won(unpaid) + "</b>" : unpaid < 0 ? '<b style="color:var(--accent)">' + won(unpaid) + "</b>" : "0") + "</td>" +
+      "<td>" + payBadge + "</td>" +
+      '<td><button class="btn btn-sm" data-t-status="' + r.id + '" title="클릭하여 상태 변경">' + esc(r.status) + "</button></td>" +
+      '<td class="actions" style="white-space:nowrap">' +
+      '<button class="btn btn-sm" data-t-pay="' + r.id + '">수금</button> ' +
+      (isModuleOn("documents") ? '<button class="btn btn-sm" data-t-doc="' + r.id + '">명세서</button> ' : "") +
+      (isModuleOn("shipping") ? '<button class="btn btn-sm" data-t-ship="' + r.id + '">배송</button> ' : "") +
+      '<button class="btn btn-sm" data-t-edit="' + r.id + '">수정</button> ' +
+      '<button class="btn btn-sm" data-t-del="' + r.id + '">삭제</button></td></tr>';
+  }).join("");
+  const totSale = sum(ev.filter((e) => e.t === "trade" && !e.mall), (e) => e.amount);
+  const totPay = sum(ev.filter((e) => e.t === "pay"), (e) => e.amount);
+  return '<div class="table-wrap"><table class="grid">' +
+    "<thead><tr><th>날짜</th><th>거래처</th><th>품목 / 입금 내역</th>" +
+    '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th>' +
+    '<th class="num">전잔금</th><th class="num">입금</th><th class="num">총미수</th>' +
+    '<th class="num">미수금</th><th>결제</th><th>상태</th><th></th></tr></thead><tbody>' +
+    (readOnlyMode ? "" : salesListEntryRowHTML()) +
+    (ev.length ? rows : '<tr><td colspan="13"><div class="empty-msg">기간 내 매출·입금 기록이 없습니다. 위 입력 줄에 적고 Enter.</div></td></tr>') +
+    '<tr class="total-row"><td colspan="5">기간 합계 (' + ev.length + '줄)</td><td class="num">' + won(totSale) + '</td><td></td><td class="num">' + won(totPay) + "</td><td colspan='5'></td></tr>" +
+    "</tbody></table></div>";
+}
+
+/** 목록용 입력 줄 (장부 보기의 입력 줄과 같은 칸, 열 배치만 목록에 맞춤) */
+function salesListEntryRowHTML() {
+  const d = bookEntryDraft;
+  if (!d.date) d.date = today();
+  const inp = (f, ph, cls) => '<input type="text" data-be="' + f + '" placeholder="' + ph + '" value="' + esc(d[f] || "") + '" class="' + (cls || "") + '" autocomplete="off" style="font-size:12.5px;padding:4px 6px">';
+  return '<tr class="book-entry" style="background:var(--bg)">' +
+    '<td><input type="date" data-be="date" value="' + esc(d.date) + '" style="font-size:12px;padding:4px"></td>' +
+    '<td style="position:relative">' + inp("partnerName", "거래처 (일부·초성)") + '<div class="combo-list" id="be-partner-list" style="display:none;min-width:280px;white-space:nowrap;z-index:20"></div></td>' +
+    "<td>" + inp("desc", "품목·내역 / 입금 적요") + "</td>" +
+    '<td colspan="2"><select data-be="bank" style="font-size:12px;padding:4px">' + BOOK_BANKS.map((b) => '<option value="' + b + '"' + (d.bank === b ? " selected" : "") + ">" + (b || "(입금은행)") + "</option>").join("") + "</select></td>" +
+    "<td>" + inp("sale", "매출 (반품 -)", "num") + "</td>" +
+    '<td class="num sub">자동</td>' +
+    "<td>" + inp("pay", "입금액", "num") + "</td>" +
+    '<td class="num sub">자동</td>' +
+    '<td colspan="2">' + inp("memo", "세금계산서·비고") + "</td>" +
+    "<td>" + inp("mall", "쇼핑몰", "num") + "</td>" +
+    '<td class="actions" style="white-space:nowrap"><button class="btn btn-sm btn-primary" id="be-save">저장 (Enter)</button></td></tr>';
 }
 
 /** 행 버튼(수금/명세서/배송/수정/삭제/상태) 바인딩 — 부분 갱신 후에도 재사용 */
