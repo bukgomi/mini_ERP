@@ -19,6 +19,14 @@ function renderSettings(el) {
     field("이메일", "co-email", c.email) +
     field("계좌번호", "co-bank", c.bankAccount, "은행명 000-0000-0000 예금주") +
     '<div class="form-field span2"><label>주소</label><input type="text" id="co-addr" value="' + esc(c.address) + '"></div>' +
+    '<div class="form-field span2"><label>직인 (거래명세서 성명 옆에 찍힘)</label>' +
+    '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">' +
+    '<div id="co-seal-prev" style="width:64px;height:64px;border:1px dashed var(--border, #ccc);border-radius:6px;display:flex;align-items:center;justify-content:center;background:#fff">' +
+    (c.sealImage ? '<img src="' + c.sealImage + '" style="max-width:60px;max-height:60px">' : '<span class="sub" style="font-size:11px">없음</span>') + "</div>" +
+    '<label class="btn btn-sm">직인 이미지 올리기<input type="file" accept="image/*" id="co-seal-file" style="display:none"></label>' +
+    (c.sealImage ? '<button class="btn btn-sm" id="co-seal-del">직인 지우기</button>' : "") +
+    '<span class="sub">PNG/JPG. 흰 배경은 자동으로 투명하게 처리되어 이름 위에 겹쳐 찍힙니다.</span>' +
+    "</div></div>" +
     "</div>" +
     '<div style="margin-top:12px"><button class="btn btn-primary" id="btn-save-company">회사 정보 저장</button></div>' +
     "</div>" +
@@ -125,10 +133,52 @@ function renderSettings(el) {
       phone: el.querySelector("#co-phone").value.trim(),
       email: el.querySelector("#co-email").value.trim(),
       bankAccount: el.querySelector("#co-bank").value.trim(),
-      address: el.querySelector("#co-addr").value.trim()
+      address: el.querySelector("#co-addr").value.trim(),
+      sealImage: state.company.sealImage || ""
     };
     markDirty();
     toast("회사 정보를 저장했습니다.", "success");
+  });
+
+  // 직인 이미지 올리기: 200px로 줄이고 흰 배경을 투명하게 → data URL로 저장
+  el.querySelector("#co-seal-file").addEventListener("change", (e) => {
+    if (guardReadOnly()) return;
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const img = new Image();
+    img.onload = () => {
+      const S = 200, cv = document.createElement("canvas");
+      cv.width = S; cv.height = S;
+      const ctx = cv.getContext("2d");
+      const r = Math.min(S / img.width, S / img.height);
+      const w = img.width * r, h = img.height * r;
+      ctx.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+      const d = ctx.getImageData(0, 0, S, S), px = d.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const rr = px[i], g = px[i + 1], b = px[i + 2];
+        const lum = (rr + g + b) / 3, sat = rr - (g + b) / 2;
+        if (lum > 235 || sat < 25) { px[i + 3] = 0; continue; }      // 흰 배경·회색 → 투명
+        px[i] = 200; px[i + 1] = 30; px[i + 2] = 30;                   // 붉은 인주색으로 통일
+        px[i + 3] = Math.min(255, Math.round(sat * 3)) * (px[i + 3] / 255);
+      }
+      ctx.putImageData(d, 0, 0);
+      state.company.sealImage = cv.toDataURL("image/png");
+      markDirty();
+      toast("직인을 등록했습니다. 거래명세서 미리보기에서 확인하세요.", "success");
+      renderSettings(el);
+    };
+    img.onerror = () => toast("이미지를 읽을 수 없습니다.", "error");
+    const rd = new FileReader();
+    rd.onload = () => { img.src = rd.result; };
+    rd.readAsDataURL(f);
+  });
+  const sealDel = el.querySelector("#co-seal-del");
+  if (sealDel) sealDel.addEventListener("click", async () => {
+    if (guardReadOnly()) return;
+    if (!(await confirmDialog("직인 이미지를 지울까요? (명세서에는 '(인)' 글자가 표시됩니다)"))) return;
+    state.company.sealImage = "";
+    markDirty();
+    renderSettings(el);
   });
 
   // 모듈 토글

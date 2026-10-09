@@ -797,7 +797,13 @@ function statementCopyHTML(d, pageLines, copyTitle, pageIdx, pageCount) {
         "<td colspan='2' style='text-align:center;font-weight:700;font-size:" + (L2 ? "15px" : "13.5px") + "'>" + esc(kd) + "</td>" +
         "<td rowspan='5' style='text-align:center;font-weight:700;padding:0;width:5%'><div style='writing-mode:vertical-rl;letter-spacing:6px;margin:0 auto'>공급자</div></td>" +
         "<th " + th + ">상 호</th><td style='font-weight:700;font-size:" + (L2 ? "15px" : "13.5px") + "'>" + esc(co.name) + "</td>" +
-        "<th " + th + ">성명</th><td style='font-weight:700;text-align:center;white-space:nowrap'>" + esc(co.ceo) + " <span style='font-size:9px;color:#c00'>(인)</span></td></tr>" +
+        "<th " + th + ">성명</th><td style='font-weight:700;text-align:center;white-space:nowrap;position:relative;overflow:visible'>" +
+        // 직인: 설정에 등록된 이미지가 있으면 이름 위에 겹쳐 찍고(실제 도장처럼), 없으면 (인) 글자
+        (co.sealImage
+          ? "<span style='position:relative;display:inline-block'>" + esc(co.ceo) +
+            "<img src='" + co.sealImage + "' alt='' style='position:absolute;left:100%;top:50%;width:" + (L2 ? "16mm" : "14mm") + ";height:auto;transform:translate(-42%,-50%);opacity:.85;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact'></span>"
+          : esc(co.ceo) + " <span style='font-size:9px;color:#c00'>(인)</span>") +
+        "</td></tr>" +
         // 2~4행: 거래처명(크게, 두 줄 가능) + 귀하 | 사업자번호 / 계좌 / 주소
         "<tr><td colspan='2' rowspan='3' style='text-align:center;vertical-align:middle;font-weight:700;font-size:" + (L2 ? "21px" : "19px") + ";line-height:1.25;word-break:keep-all;overflow-wrap:anywhere;padding:4px 6px'>" +
         // 상호에 띄어쓰기가 있으면 첫 띄어쓰기에서 두 줄로 ("오산 스타피싱" → 오산 / 스타피싱). 없으면 한 줄(길면 자동 줄바꿈)

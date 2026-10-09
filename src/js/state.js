@@ -12,7 +12,7 @@ function defaultState() {
   return {
     schemaVersion: SCHEMA_VERSION,
     lastSaved: null,
-    company: { name: "", ceo: "", bizNumber: "", address: "", phone: "", email: "", bankAccount: "" },
+    company: { name: "", ceo: "", bizNumber: "", address: "", phone: "", email: "", bankAccount: "", sealImage: "" },
     // 모듈 켜기/끄기 — SPEC 4.1 기본값
     modules: {
       sales: true, purchases: true, inventory: true, shipping: false,
