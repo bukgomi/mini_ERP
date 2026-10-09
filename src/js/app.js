@@ -14,10 +14,11 @@ const popupMode = _urlParams.get("popup") === "1";
 const popupInitialView = _urlParams.get("view") || "dashboard";
 
 /** 현재 화면을 새 창으로 열기 */
-function openPopupWindow(viewId) {
+function openPopupWindow(viewId, sub) {
   const url = new URL(location.href);
   url.searchParams.set("popup", "1");
   url.searchParams.set("view", viewId || currentView);
+  if (sub) url.searchParams.set("sub", sub); else url.searchParams.delete("sub"); // 화면 안의 보기 방식 (예: 매출 관리의 거래처별 잔금)
   window.open(url.toString(), "_blank", "width=1150,height=820");
 }
 
