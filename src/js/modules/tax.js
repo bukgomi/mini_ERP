@@ -210,9 +210,9 @@ function taxInvoiceForm(id, preset) {
     '<div class="form-field"><label>거래처 *</label><input type="text" id="tif-partner" list="tif-names" value="' + esc(init.partner) + '" autocomplete="off"><datalist id="tif-names">' + [...names].map((n) => '<option value="' + esc(n) + '">').join("") + "</datalist></div>" +
     '<div class="form-field"><label>사업자번호</label><input type="text" id="tif-bizno" value="' + esc(init.bizNumber) + '" placeholder="123-45-67890"></div>' +
     '<div class="form-field"><label>품목</label><input type="text" id="tif-item" list="tif-items" value="' + esc(init.item) + '" autocomplete="off"><datalist id="tif-items">' + RENT_ITEMS.map((n) => '<option value="' + n + '">').join("") + "</datalist></div>" +
+    '<div class="form-field"><label>합계 <span class="sub">(부가세 포함 금액을 적으면 공급가액·세액 자동)</span></label><input type="text" class="num" id="tif-total" value="' + fmtMoney(init.total) + '" placeholder="예: 1,405,000"></div>' +
     '<div class="form-field"><label>공급가액 *</label><input type="text" class="num" id="tif-supply" value="' + fmtMoney(init.supply) + '"></div>' +
-    '<div class="form-field"><label>세액 <span class="sub">(자동 10%, 면세는 0)</span></label><input type="text" class="num" id="tif-vat" value="' + fmtMoney(init.vat) + '"></div>' +
-    '<div class="form-field"><label>합계</label><input type="text" class="num" id="tif-total" value="' + fmtMoney(init.total) + '" readonly style="background:var(--bg)"></div>' +
+    '<div class="form-field"><label>세액 <span class="sub">(공급가액의 10%, 면세는 0)</span></label><input type="text" class="num" id="tif-vat" value="' + fmtMoney(init.vat) + '"></div>' +
     '<div class="form-field"><label>승인번호</label><input type="text" id="tif-appr" value="' + esc(init.approvalNo) + '"></div>' +
     '<div class="form-field span2"><label>비고</label><input type="text" id="tif-memo" value="' + esc(init.memo) + '"></div>' +
     "</div>" +
@@ -224,7 +224,18 @@ function taxInvoiceForm(id, preset) {
     if (!vatTouched) q("#tif-vat").value = fmtMoney(q("#tif-kind").value === "계산서(면세)" ? 0 : calcVat(sup));
     q("#tif-total").value = fmtMoney(sup + parseMoney(q("#tif-vat").value));
   };
-  q("#tif-supply").addEventListener("input", recalc);
+  // 합계(부가세 포함)를 적으면 공급가액 = 합계÷1.1(반올림), 세액 = 합계 − 공급가액. 면세는 공급가액 = 합계
+  const fromTotal = () => {
+    const tot = parseMoney(q("#tif-total").value);
+    const exempt = q("#tif-kind").value === "계산서(면세)";
+    const sup = exempt ? tot : supplyFromTotal(tot);
+    q("#tif-supply").value = fmtMoney(sup);
+    q("#tif-vat").value = fmtMoney(exempt ? 0 : tot - sup);
+    vatTouched = !exempt; // 합계 기준 세액은 그대로 두고, 공급가액을 다시 만지면 10%로 재계산
+  };
+  q("#tif-total").addEventListener("input", fromTotal);
+  q("#tif-total").addEventListener("blur", () => { q("#tif-total").value = fmtMoney(parseMoney(q("#tif-total").value)); });
+  q("#tif-supply").addEventListener("input", () => { vatTouched = false; recalc(); });
   q("#tif-kind").addEventListener("change", () => { vatTouched = false; recalc(); });
   q("#tif-vat").addEventListener("input", () => { vatTouched = true; recalc(); });
   q("#tif-partner").addEventListener("change", () => {
