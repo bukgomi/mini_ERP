@@ -1462,10 +1462,11 @@ function saleShipSectionHTML(rec) {
     '<span class="sub">거래처를 고르면 주소록에서 자동으로 채워집니다 · 체크하고 저장하면 CJ 송장 파일에 들어갑니다</span></summary>' +
     '<label style="display:flex;align-items:center;gap:6px;margin:8px 0;cursor:pointer"><input type="checkbox" id="trs-on"' + (sh ? " checked" : "") + ' style="width:auto"> <b>택배 발송</b> <span class="sub" id="trs-src"></span></label>' +
     '<div class="form-grid" style="grid-template-columns:repeat(4,1fr)">' +
-    '<div class="form-field"><label>수령인</label><input type="text" id="trs-receiver" value="' + v("receiver") + '"></div>' +
+    '<div class="form-field" style="position:relative"><label>수령인 <span class="sub">(이름·초성·전화로 주소록 검색)</span></label><input type="text" id="trs-receiver" value="' + v("receiver") + '" autocomplete="off" placeholder="예: 고바우 / ㄱㅂㅇ / 010">' +
+    '<div class="combo-list" id="trs-rlist" style="display:none;min-width:420px"></div></div>' +
     '<div class="form-field"><label>전화</label><input type="text" id="trs-phone" value="' + v("phone") + '"></div>' +
     '<div class="form-field"><label>기타 연락처</label><input type="text" id="trs-phone2" value="' + v("phone2") + '"></div>' +
-    '<div class="form-field"><label>박스</label><select id="trs-box">' + ["중", "소", "대"].map((b) => "<option" + ((sh ? sh.box : "중") === b ? " selected" : "") + ">" + b + "</option>").join("") + "</select></div>" +
+    '<div class="form-field"><label>박스</label><select id="trs-box">' + BOX_SIZES.map((b) => "<option" + ((sh ? sh.box : "중") === b ? " selected" : "") + ">" + b + "</option>").join("") + "</select></div>" +
     '<div class="form-field" style="grid-column:span 3"><label>주소</label><input type="text" id="trs-addr" value="' + v("address") + '"></div>' +
     '<div class="form-field"><label>운임</label><select id="trs-freight">' + ["선불", "착불", "신용"].map((b) => "<option" + ((sh ? sh.freight : "선불") === b ? " selected" : "") + ">" + b + "</option>").join("") + "</select></div>" +
     '<div class="form-field" style="grid-column:span 2"><label>품목명 <span class="sub">(비우면 품목 줄로 자동)</span></label><input type="text" id="trs-item" value="' + v("itemName") + '"></div>' +
@@ -1503,6 +1504,15 @@ function bindSaleShipSection(overlay, lines) {
   on.addEventListener("change", () => { if (on.checked) overlay.querySelector("#trf-ship").open = true; });
   // 택배 칸에 뭔가 적으면 자동 체크
   ["#trs-receiver", "#trs-addr", "#trs-track"].forEach((sel) => overlay.querySelector(sel).addEventListener("input", () => { on.checked = true; }));
+  // 수령인 검색 콤보: 주소록 모든 시트(거래처·스마트스토어·고객 등) + 거래처 택배주소
+  const q = (sel) => overlay.querySelector(sel);
+  attachRecipientCombo(q("#trs-receiver"), q("#trs-rlist"), (x) => {
+    q("#trs-receiver").value = x.name; q("#trs-phone").value = x.phone; q("#trs-phone2").value = x.phone2 || ""; q("#trs-addr").value = x.address;
+    if (x.msg) q("#trs-msg").value = x.msg;
+    q("#trs-src").textContent = "← 주소록(" + (x.group || x.kind) + ")에서 선택";
+    on.checked = true;
+    q("#trs-box").focus();
+  });
   // 수정 폼: 이미 거래처가 있으면 주소 채움
   const pid = overlay.querySelector("#trf-partner").value;
   if (pid && !overlay.querySelector("#trs-receiver").value) fillSaleShipFromPartner(overlay, pid, lines);
@@ -1525,8 +1535,12 @@ function saveSaleShipSection(overlay, sale) {
   };
   if (sh) { Object.assign(sh, data); if (data.trackingNo && sh.status === "상품준비") sh.status = "출고완료"; }
   else { sh = Object.assign({ id: uid("sh"), status: data.trackingNo ? "출고완료" : "상품준비", memo: "" }, data); state.shipments.push(sh); }
-  // 수령인 주소를 주소록에 저장 (거래처 연결)
-  upsertAddressBook({ group: "거래처", name: receiver, phone: data.phone, phone2: data.phone2, address, msg: data.msg, partnerId: sale.partnerId });
+  // 수령인 주소를 주소록에 저장. 거래처 연결은 수령인이 그 거래처 자신일 때만
+  // (스마트스토어 등 위탁몰 거래처의 매출에 개별 고객 주소를 넣은 경우 거래처 주소로 묶이지 않게)
   const p = getPartner(sale.partnerId);
-  if (p && !(p.shipTo && p.shipTo.address)) p.shipTo = { name: receiver, phone: data.phone, phone2: data.phone2, address, msg: data.msg };
+  const nz = (v) => String(v || "").replace(/\s+/g, "");
+  const linked = (state.addressBook || []).find((a) => a.partnerId === sale.partnerId && nz(a.name) === nz(receiver));
+  const isPartnerSelf = !!p && (nz(p.name) === nz(receiver) || (p.shipTo && nz(p.shipTo.name) === nz(receiver)) || !!linked);
+  upsertAddressBook({ group: isPartnerSelf ? "거래처" : "고객", name: receiver, phone: data.phone, phone2: data.phone2, address, msg: data.msg, partnerId: isPartnerSelf ? sale.partnerId : "" });
+  if (p && isPartnerSelf && !(p.shipTo && p.shipTo.address)) p.shipTo = { name: receiver, phone: data.phone, phone2: data.phone2, address, msg: data.msg };
 }

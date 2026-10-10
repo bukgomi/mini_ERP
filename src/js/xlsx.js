@@ -48,10 +48,27 @@ function makeXlsx(rows, sheetName) {
     return s;
   };
 
-  // 시트 XML — 문자열은 inlineStr로 기록해 sharedStrings 불필요
+  // 문자열은 sharedStrings(공유 문자열)로 기록 — inlineStr은 엑셀은 읽지만
+  // 택배 송장 프로그램 등 OLEDB(ACE) 기반 프로그램이 빈 칸으로 읽는 문제가 있어 표준 방식 사용
+  const sst = [];               // 공유 문자열 목록
+  const sstIdx = new Map();     // 문자열 → 인덱스
+  let sstCount = 0;             // 참조 총 횟수
+  const sstOf = (s) => {
+    const k = String(s);
+    sstCount++;
+    if (sstIdx.has(k)) return sstIdx.get(k);
+    sstIdx.set(k, sst.length); sst.push(k);
+    return sst.length - 1;
+  };
   const sheetXmlOf = (rows) => {
+    const nRows = (rows || []).length;
+    const nCols = (rows || []).reduce((m, r) => Math.max(m, (r || []).length), 0);
     let sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      '<dimension ref="A1:' + colName(Math.max(nCols, 1) - 1) + Math.max(nRows, 1) + '"/>' +
+      '<sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>' +
+      "<sheetData>";
     (rows || []).forEach((row, ri) => {
       sheetXml += '<row r="' + (ri + 1) + '">';
       (row || []).forEach((cell, ci) => {
@@ -59,13 +76,25 @@ function makeXlsx(rows, sheetName) {
         if (typeof cell === "number" && isFinite(cell)) {
           sheetXml += '<c r="' + ref + '"><v>' + cell + "</v></c>";
         } else if (cell != null && cell !== "") {
-          sheetXml += '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + xesc(cell) + "</t></is></c>";
+          sheetXml += '<c r="' + ref + '" t="s"><v>' + sstOf(cell) + "</v></c>";
         }
       });
       sheetXml += "</row>";
     });
     return sheetXml + "</sheetData></worksheet>";
   };
+  const sheetXmls = sheets.map((sh) => sheetXmlOf(sh.rows));   // sst를 먼저 채운다
+  const sstXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="' + sstCount + '" uniqueCount="' + sst.length + '">' +
+    sst.map((s) => '<si><t xml:space="preserve">' + xesc(s) + "</t></si>").join("") + "</sst>";
+  const stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font><sz val="11"/><name val="맑은 고딕"/></font></fonts>' +
+    '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+    '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
   const safeName = (n, i) => String(n || "Sheet" + (i + 1)).replace(/[\\/?*\[\]:]/g, " ").slice(0, 31);
 
   const files = [
@@ -75,6 +104,8 @@ function makeXlsx(rows, sheetName) {
       '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
       '<Default Extension="xml" ContentType="application/xml"/>' +
       '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>' +
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
       sheets.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join("") +
       "</Types>"],
     ["_rels/.rels",
@@ -91,8 +122,12 @@ function makeXlsx(rows, sheetName) {
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
             sheets.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join("") +
-      "</Relationships>"]
-  ].concat(sheets.map((sh, i) => ["xl/worksheets/sheet" + (i + 1) + ".xml", sheetXmlOf(sh.rows)]));
+      '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>' +
+      '<Relationship Id="rId' + (sheets.length + 2) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      "</Relationships>"],
+    ["xl/sharedStrings.xml", sstXml],
+    ["xl/styles.xml", stylesXml]
+  ].concat(sheets.map((sh, i) => ["xl/worksheets/sheet" + (i + 1) + ".xml", sheetXmls[i]]));
 
   // ---- ZIP 조립 (STORE, 무압축) ----
   const parts = [];        // 파일 데이터 청크

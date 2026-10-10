@@ -18,7 +18,7 @@ const COURIERS = {
 let shipFilterTab = "전체"; // 상태 필터 탭
 let shipSearch = "";
 let shipExportDate = "";   // CJ 송장 파일 날짜
-const BOX_SIZES = ["중", "소", "대"];
+const BOX_SIZES = ["극소", "소", "중", "대"];
 const FREIGHT_TYPES = ["선불", "착불", "신용"];
 const CJ_HEADER = ["받는분성명", "받는분전화번호", "받는분기타연락처", "받는분주소(전체, 분할)", "품목명", "내품수량", "운임구분", "배송메세지"];
 
@@ -40,8 +40,7 @@ function renderShipping(el) {
     '<div class="card" style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
     '<b>📦 CJ 송장 파일</b> <input type="date" id="ship-exp-date" value="' + shipExportDate + '" style="width:auto">' +
     '<span class="sub">이 날짜의 "상품준비" 건을 CJ 업로드 양식(받는분성명·전화·기타연락처·주소·품목명·내품수량·운임구분·배송메세지)으로</span> ' +
-    '<button class="btn btn-sm" data-ship-exp="중">중 박스 파일</button> <button class="btn btn-sm" data-ship-exp="소">소 박스 파일</button> ' +
-    '<button class="btn btn-sm" data-ship-exp="대">대 박스 파일</button> <button class="btn btn-sm" data-ship-exp="">전체</button>' +
+    BOX_SIZES.map((b) => '<button class="btn btn-sm" data-ship-exp="' + b + '">' + b + ' 박스 파일</button>').join(" ") + ' <button class="btn btn-sm" data-ship-exp="">전체</button>' +
     '<span class="sub" id="ship-exp-count"></span></div>' +
 
     '<div class="tabs">' +
@@ -76,7 +75,7 @@ function renderShipping(el) {
   el.querySelector("#ship-exp-date").addEventListener("change", (e) => { shipExportDate = e.target.value; renderApp(); });
   el.querySelectorAll("[data-ship-exp]").forEach((b) => b.addEventListener("click", () => exportCjFile(b.getAttribute("data-ship-exp"))));
   const cnt = state.shipments.filter((x) => x.date === shipExportDate && x.status === "상품준비");
-  el.querySelector("#ship-exp-count").textContent = cnt.length ? "→ 상품준비 " + cnt.length + "건 (중 " + cnt.filter((x) => (x.box || "중") === "중").length + " · 소 " + cnt.filter((x) => x.box === "소").length + " · 대 " + cnt.filter((x) => x.box === "대").length + ")" : "→ 이 날짜에 상품준비 건이 없습니다";
+  el.querySelector("#ship-exp-count").textContent = cnt.length ? "→ 상품준비 " + cnt.length + "건 (" + BOX_SIZES.map((b) => b + " " + cnt.filter((x) => (x.box || "중") === b).length).join(" · ") + ")" : "→ 이 날짜에 상품준비 건이 없습니다";
   bindShipRows(el.querySelector("#ship-card"));
 }
 
@@ -204,6 +203,29 @@ function recipientCandidates(q) {
   return out.sort((a, b) => score(a) - score(b) || a.name.localeCompare(b.name, "ko")).slice(0, 40);
 }
 
+/** 수령인 입력칸에 검색 콤보 붙이기: 이름 일부·초성·전화·주소로 주소록(시트 전부)과 거래처를 검색해 고르면 onPick(x) */
+function attachRecipientCombo(input, listEl, onPick, onInput) {
+  let cands = [];
+  function render(qs) {
+    cands = recipientCandidates(qs);
+    listEl.innerHTML = cands.length ? cands.map((x, i) => '<div class="combo-item' + (i === 0 ? " active" : "") + '" data-rpick="' + i + '"><span><b>' + esc(x.name) + '</b> <span class="ci-sub">' + esc(x.phone) + "</span><br><span class=\"ci-sub\">" + esc(x.address) + "</span></span>" +
+      '<span class="ci-sub">' + esc(x.group || x.kind) + "</span></div>").join("") : '<div class="combo-empty">주소록에 없음 — 그대로 입력하면 저장 시 주소록에 추가됩니다</div>';
+    listEl.style.display = "block";
+    listEl.querySelectorAll("[data-rpick]").forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); pick(cands[Number(el.getAttribute("data-rpick"))]); }));
+  }
+  function pick(x) { if (!x) return; listEl.style.display = "none"; onPick(x); }
+  input.addEventListener("input", () => { if (onInput) onInput(); render(input.value); });
+  input.addEventListener("focus", () => render(input.value));
+  input.addEventListener("blur", () => setTimeout(() => { listEl.style.display = "none"; }, 150));
+  input.addEventListener("keydown", (e) => {
+    const items = Array.from(listEl.querySelectorAll("[data-rpick]"));
+    let idx = items.findIndex((el) => el.classList.contains("active"));
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (!items.length) return; idx = (idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; items.forEach((el, k) => el.classList.toggle("active", k === idx)); items[idx].scrollIntoView({ block: "nearest" }); }
+    else if (e.key === "Enter") { e.preventDefault(); const el = items[idx >= 0 ? idx : 0]; if (el && listEl.style.display !== "none") pick(cands[Number(el.getAttribute("data-rpick"))]); else listEl.style.display = "none"; }
+    else if (e.key === "Escape") listEl.style.display = "none";
+  });
+}
+
 /** 배송 등록/수정 폼. saleId가 있으면 매출 건 연결 + 거래처 주소록 자동 입력 */
 function shipmentForm(id, saleId) {
   if (guardReadOnly()) return;
@@ -267,33 +289,14 @@ function shipmentForm(id, saleId) {
 
   const q = (sel) => overlay.querySelector(sel);
   let pickedPartnerId = init.partnerId || "";
-  // 수령인 검색 콤보
-  const rlist = () => q("#shf-rlist");
-  function renderRecipientList(qs) {
-    const c = recipientCandidates(qs);
-    rlist().innerHTML = c.length ? c.map((x, i) => '<div class="combo-item' + (i === 0 ? " active" : "") + '" data-rpick="' + i + '"><span><b>' + esc(x.name) + '</b> <span class="ci-sub">' + esc(x.phone) + "</span><br><span class=\"ci-sub\">" + esc(x.address) + "</span></span>" +
-      '<span class="ci-sub">' + esc(x.group || x.kind) + "</span></div>").join("") : '<div class="combo-empty">주소록에 없음 — 그대로 입력하면 저장 시 주소록에 추가됩니다</div>';
-    rlist().style.display = "block";
-    rlist().querySelectorAll("[data-rpick]").forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); pickRecipient(c[Number(el.getAttribute("data-rpick"))]); }));
-  }
-  function pickRecipient(x) {
+  // 수령인 검색 콤보 (주소록 모든 시트 + 거래처)
+  attachRecipientCombo(q("#shf-receiver"), q("#shf-rlist"), (x) => {
     q("#shf-receiver").value = x.name; q("#shf-phone").value = x.phone; q("#shf-phone2").value = x.phone2 || ""; q("#shf-addr").value = x.address;
     if (x.msg) q("#shf-msg").value = x.msg;
     if (x.item && !q("#shf-sale").value) q("#shf-item").value = x.item;
     pickedPartnerId = x.partnerId || "";
-    rlist().style.display = "none";
     q("#shf-box").focus();
-  }
-  q("#shf-receiver").addEventListener("input", () => { pickedPartnerId = ""; renderRecipientList(q("#shf-receiver").value); });
-  q("#shf-receiver").addEventListener("focus", () => renderRecipientList(q("#shf-receiver").value));
-  q("#shf-receiver").addEventListener("blur", () => setTimeout(() => { rlist().style.display = "none"; }, 150));
-  q("#shf-receiver").addEventListener("keydown", (e) => {
-    const items = Array.from(rlist().querySelectorAll("[data-rpick]"));
-    let idx = items.findIndex((el) => el.classList.contains("active"));
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (!items.length) return; idx = (idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; items.forEach((el, k) => el.classList.toggle("active", k === idx)); items[idx].scrollIntoView({ block: "nearest" }); }
-    else if (e.key === "Enter") { e.preventDefault(); const el = items[idx >= 0 ? idx : 0]; if (el && rlist().style.display !== "none") pickRecipient(recipientCandidates(q("#shf-receiver").value)[Number(el.getAttribute("data-rpick"))]); else rlist().style.display = "none"; }
-    else if (e.key === "Escape") rlist().style.display = "none";
-  });
+  }, () => { pickedPartnerId = ""; });
   // 매출 건을 바꾸면 거래처 주소·품목 자동
   q("#shf-sale").addEventListener("change", () => {
     const sale = getSale(q("#shf-sale").value);
