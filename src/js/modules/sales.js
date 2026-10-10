@@ -1233,7 +1233,9 @@ function printBalanceSheet(rows, f) {
     ".bp th,.bp td{border:0.7px solid #444;padding:0 5px;height:6.3mm;line-height:1.2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}" +
     ".bp th{background:#eee;font-weight:700;text-align:center;font-size:11.5px}.bp td.n,.bp th.n{text-align:right}.bp td.c{text-align:center;color:#555}.bp td.b{font-weight:700;font-size:13.5px}" +
     ".bp .w-no{width:6%}.bp .w-name{width:28%}.bp .w-tel{width:15%}.bp .w-num{width:12.5%}.bp .w-bal{width:14%}.bp .w-chk{width:12%}" +
-    ".bp tr.tot td{background:#f3f3f3;font-weight:700;border-top:2px solid #000}" +
+    ".bp tbody tr:nth-child(even) td{background:#eef2f8}.bp tbody tr:nth-child(even) td{-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+    ".bp th{-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+    ".bp tr.tot td{background:#dfe6f1 !important;font-weight:700;border-top:2px solid #000}" +
     ".bp .foot{font-size:10px;color:#444;margin-top:6px}</style>" +
     '<div class="bp"><h1>거래처 미수금 현황' + (balOnlyUnpaid ? "" : " (거래처별 잔금)") + "</h1>" +
     '<div class="meta"><span>' + esc(co.name || "") + "</span><span>기간 " + esc(f.from || "처음") + " ~ " + esc(f.to || "오늘") + " · 기준일 " + today() + " · 거래처 " + n + "곳</span></div>" +

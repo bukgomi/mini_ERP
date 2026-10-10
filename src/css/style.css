@@ -16,6 +16,7 @@
 
   --bg: #f4f5f8;                /* 콘텐츠 배경 */
   --card-bg: #ffffff;
+  --stripe-bg: #f3f6fb;         /* 표 교차 줄 배경 */
   --text: #1f2430;
   --text-dim: #7c8494;
   --border: #e3e7ed;
@@ -50,6 +51,7 @@
     --sidebar-border: #2a3140;
     --bg: #131720;
     --card-bg: #1e242f;
+    --stripe-bg: #232a37;
     --text: #e6eaf0;
     --text-dim: #8b95a5;
     --border: #313947;
@@ -69,6 +71,7 @@
   --sidebar-border: #2a3140;
   --bg: #131720;
   --card-bg: #1e242f;
+  --stripe-bg: #232a37;
   --text: #e6eaf0;
   --text-dim: #8b95a5;
   --border: #313947;
@@ -284,7 +287,9 @@ table.grid th {
   position: sticky; top: 0; z-index: 1;
 }
 table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-table.grid tbody tr:hover td { background: var(--hover-bg); }
+/* 교차 줄 색상 (입력 줄·합계 줄 제외) — 마우스 올리면 hover 색이 우선 */
+table.grid tbody tr:nth-child(even):not(.book-entry):not(.total-row):not(.subtotal-row) td { background: var(--stripe-bg); }
+table.grid tbody tr:hover:not(.book-entry) td { background: var(--hover-bg); }
 table.grid tr.total-row td { font-weight: 700; background: var(--bg); }
 table.grid tr.subtotal-row td { font-weight: 600; background: var(--bg); color: var(--text-dim); }
 table.grid td.actions { white-space: nowrap; text-align: right; }
