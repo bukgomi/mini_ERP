@@ -356,7 +356,8 @@ table.grid td.actions { white-space: nowrap; text-align: right; }
   padding: 9px 13px; cursor: pointer; font-size: 13px;
   display: flex; justify-content: space-between; align-items: center; gap: 10px;
 }
-.combo-item:hover { background: var(--hover-bg); }
+.combo-item:hover, .combo-item.active { background: var(--hover-bg); }
+.item-linked { border-color: var(--success, #2f9e44) !important; box-shadow: inset 3px 0 0 var(--success, #2f9e44); }
 .combo-item .ci-sub { color: var(--text-dim); font-size: 11.5px; white-space: nowrap; }
 .combo-empty { padding: 12px; color: var(--text-dim); font-size: 13px; text-align: center; }
 

@@ -370,14 +370,13 @@ function tradeForm(kind, id) {
   function linesHTML() {
     return lines.map((ln, i) =>
       '<tr data-line="' + i + '">' +
-      "<td>" +
-      (useItems
-        ? '<select data-lf="itemId" data-i="' + i + '"><option value="">(직접 입력)</option>' +
-          state.items.map((it) => '<option value="' + it.id + '"' + (ln.itemId === it.id ? " selected" : "") + ">" + esc(it.name) + "</option>").join("") +
-          "</select>"
-        : "") +
-      '<input type="text" data-lf="name" data-i="' + i + '" value="' + esc(ln.name) + '" placeholder="품명"' +
-      (useItems && ln.itemId ? ' style="display:none"' : "") + "></td>" +
+      // 품목: 이름 일부·초성("ㄷㄷ")만 쳐도 등록 품목 목록이 뜨고, 고르면 단가·규격 자동. 목록에 없으면 그대로 자유 입력
+      '<td style="min-width:190px"><div style="position:relative">' +
+      '<input type="text" data-lf="name" data-i="' + i + '" value="' + esc(ln.name) + '" autocomplete="off" placeholder="' +
+      (useItems ? "품명 일부·초성 입력" : "품명") + '"' +
+      (useItems && ln.itemId ? ' class="item-linked" title="등록 품목에 연결됨 (재고·단가 자동)"' : "") + ">" +
+      (useItems ? '<div class="combo-list" data-ilist="' + i + '" style="display:none;min-width:320px"></div>' : "") +
+      "</div></td>" +
       // 규격: 세부 내용(호수·무게·색상 등) 여러 줄 — Alt+Enter로 줄바꿈, 거래명세서에 그대로 인쇄
       '<td style="width:130px"><textarea data-lf="spec" data-i="' + i + '" rows="1" placeholder="규격" ' +
       'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.spec || "") + "</textarea></td>" +
@@ -517,25 +516,82 @@ function tradeForm(kind, id) {
     });
   }
 
-  function bindLineEvents() {
-    // 품목 선택 → 단가 자동 입력
-    overlay.querySelectorAll('[data-lf="itemId"]').forEach((sel) => {
-      sel.addEventListener("change", () => {
-        const i = Number(sel.getAttribute("data-i"));
-        const item = getItem(sel.value);
-        lines[i].itemId = sel.value;
-        if (item) {
-          lines[i].name = item.name;
-          if (!lines[i].spec) lines[i].spec = item.spec || "";
-          // 매출 = 판매 단가(도매 모드면 도매가), 매입 = 매입가 자동
-          const curPartner = getPartner(overlay.querySelector("#trf-partner").value);
-          lines[i].unitPrice = kind === "sales" ? sellPriceOf(item, curPartner) : (Number(item.costPrice) || 0);
-        }
-        refreshLines();
-      });
+  /* ---------- 품목 검색 콤보 (줄마다) ---------- */
+  function itemListEl(i) { return overlay.querySelector('[data-ilist="' + i + '"]'); }
+  function renderItemList(i, q) {
+    const box = itemListEl(i);
+    if (!box) return;
+    const nq = String(q || "").replace(/\s+/g, "").toLowerCase();
+    const curPartner = getPartner(overlay.querySelector("#trf-partner").value);
+    const score = (it) => {
+      if (!nq) return 0;
+      const flat = String(it.name || "").replace(/\s+/g, "").toLowerCase();
+      const words = String(it.name || "").toLowerCase().split(/[\s\-()]+/).filter(Boolean);
+      if (flat.startsWith(nq) || chosung(flat).startsWith(nq)) return 0;
+      if (words.some((w) => w.startsWith(nq) || chosung(w).startsWith(nq))) return 1;
+      const k = Math.max(flat.indexOf(nq), chosung(flat).indexOf(nq));
+      return k < 0 ? 50 : 2 + k;
+    };
+    const matches = state.items.filter((it) => itemMatches(it, q))
+      .sort((a, b) => score(a) - score(b) || String(a.name).localeCompare(String(b.name), "ko"))
+      .slice(0, 40);
+    box.innerHTML = matches.length
+      ? matches.map((it, k) => {
+          const price = kind === "sales" ? sellPriceOf(it, curPartner) : (Number(it.costPrice) || 0);
+          const stock = typeof currentStock === "function" ? currentStock(it.id) : null;
+          return '<div class="combo-item' + (k === 0 ? " active" : "") + '" data-ipick="' + it.id + '"><span><b>' + esc(it.name) + "</b>" +
+            (it.spec ? ' <span class="ci-sub">' + esc(it.spec) + "</span>" : "") + "</span>" +
+            '<span class="ci-sub">' + fmtMoney(price) + "원" + (stock !== null ? " · 재고 " + fmtMoney(stock) : "") + "</span></div>";
+        }).join("")
+      : '<div class="combo-empty">등록 품목에 없음 — 이대로 입력하면 자유 품명으로 저장됩니다</div>';
+    box.style.display = "block";
+    box.querySelectorAll("[data-ipick]").forEach((el) => {
+      el.addEventListener("mousedown", (e) => { e.preventDefault(); pickItem(i, el.getAttribute("data-ipick")); });
     });
+  }
+  function pickItem(i, itemId) {
+    const item = getItem(itemId);
+    if (!item) return;
+    lines[i].itemId = itemId;
+    lines[i].name = item.name;
+    if (!lines[i].spec) lines[i].spec = item.spec || "";
+    // 매출 = 판매 단가(거래처가 소매면 소매가, 아니면 도매가), 매입 = 매입가 자동
+    const curPartner = getPartner(overlay.querySelector("#trf-partner").value);
+    lines[i].unitPrice = kind === "sales" ? sellPriceOf(item, curPartner) : (Number(item.costPrice) || 0);
+    refreshLines();
+    const qtyInp = overlay.querySelector('[data-lf="qty"][data-i="' + i + '"]');
+    if (qtyInp) { qtyInp.focus(); qtyInp.select(); }
+  }
+
+  function bindLineEvents() {
     overlay.querySelectorAll('[data-lf="name"]').forEach((inp) => {
-      inp.addEventListener("input", () => { lines[Number(inp.getAttribute("data-i"))].name = inp.value; });
+      const i = Number(inp.getAttribute("data-i"));
+      inp.addEventListener("input", () => {
+        lines[i].name = inp.value;
+        if (lines[i].itemId) { lines[i].itemId = ""; inp.classList.remove("item-linked"); } // 글자를 고치면 연결 해제 → 자유 품명
+        if (useItems) renderItemList(i, inp.value);
+      });
+      if (!useItems) return;
+      inp.addEventListener("focus", () => renderItemList(i, lines[i].itemId ? "" : inp.value));
+      inp.addEventListener("blur", () => setTimeout(() => { const b = itemListEl(i); if (b) b.style.display = "none"; }, 150));
+      inp.addEventListener("keydown", (e) => {
+        const box = itemListEl(i);
+        if (!box || box.style.display === "none") return;
+        const items = Array.from(box.querySelectorAll("[data-ipick]"));
+        let idx = items.findIndex((el) => el.classList.contains("active"));
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          if (!items.length) return;
+          idx = (idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+          items.forEach((el, k) => el.classList.toggle("active", k === idx));
+          items[idx].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          const el = items[idx >= 0 ? idx : 0];
+          if (el) pickItem(i, el.getAttribute("data-ipick"));
+          else box.style.display = "none";
+        } else if (e.key === "Escape") box.style.display = "none";
+      });
     });
     overlay.querySelectorAll('[data-lf="note"]').forEach((inp) => {
       inp.addEventListener("input", () => { lines[Number(inp.getAttribute("data-i"))].note = inp.value; });

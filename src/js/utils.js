@@ -110,6 +110,19 @@ function chosung(str) {
  * 거래처 유사 검색 — 공백·대소문자 무시 부분 일치, 초성 검색("ㅅㅌ" → 스타피싱),
  * 사업자번호·메모의 입금자명도 함께 본다. 빈 검색어는 전부 일치
  */
+/** 품목 검색: 이름·코드·규격·메모에서 띄어쓰기 무시 부분 일치 + 초성("ㄷㄷ" → 독도) 일치 */
+function itemMatches(it, q) {
+  q = String(q || "").replace(/\s+/g, "").toLowerCase();
+  if (!q) return true;
+  const fields = [it.name, it.code, it.spec, it.memo].map((v) => String(v || "").replace(/\s+/g, "").toLowerCase());
+  if (fields.some((f) => f && f.includes(q))) return true;
+  if (/[ㄱ-ㅎ]/.test(q)) {
+    const cq = chosung(q);
+    return fields.some((f) => f && chosung(f).includes(cq));
+  }
+  return false;
+}
+
 function partnerMatches(p, q) {
   q = String(q || "").replace(/\s+/g, "").toLowerCase();
   if (!q) return true;
