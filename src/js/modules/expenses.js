@@ -202,11 +202,12 @@ function expenseForm(id) {
     '<div class="form-field"><label>거래처</label><input type="text" id="exf-partner" value="' + esc(init.partner) + '" placeholder="상호 (카드 내역 그대로)"></div>' +
     '<div class="form-field span2"><label>내용 (용도·목적) *</label><input type="text" id="exf-desc" value="' + esc(init.desc) + '"></div>' +
     '<div class="form-field"><label>결제수단</label><select id="exf-method">' + opt(expenseMethodList(), init.method) + "</select></div>" +
-    '<div class="form-field"><label>공급가액 *</label><input type="text" class="num" id="exf-supply" value="' + fmtMoney(init.supply) + '"></div>' +
-    '<div class="form-field"><label>부가세 <button class="btn btn-sm" id="exf-split" type="button" title="합계를 공급가액÷1.1로 나눕니다">÷1.1 분리</button></label><input type="text" class="num" id="exf-vat" value="' + fmtMoney(init.vat) + '"></div>' +
-    '<div class="form-field"><label>합계</label><input type="text" class="num" id="exf-total" value="' + fmtMoney(init.total || (Number(init.supply) || 0) + (Number(init.vat) || 0)) + '" readonly style="background:var(--bg)"></div>' +
+    '<div class="form-field"><label>합계 (결제금액) * <span class="sub">(적으면 공급가액·부가세 자동)</span></label><input type="text" class="num" id="exf-total" value="' + fmtMoney(init.total || (Number(init.supply) || 0) + (Number(init.vat) || 0)) + '" placeholder="영수증 금액"></div>' +
     '<div class="form-field"><label>증빙종류</label><select id="exf-evidence">' + opt(EXP_EVIDENCE, init.evidence) + "</select></div>" +
     '<div class="form-field"><label>부가세공제</label><label style="display:flex;align-items:center;gap:8px;height:36px;cursor:pointer"><input type="checkbox" id="exf-ded"' + (init.vatDeductible ? " checked" : "") + ' style="width:auto"> 매입세액 공제 받음 (세금계산서·사업용카드·지출증빙)</label></div>' +
+    '<div class="form-field"><label>공급가액 <span class="sub">(자동 — 필요하면 고침)</span></label><input type="text" class="num" id="exf-supply" value="' + fmtMoney(init.supply) + '"></div>' +
+    '<div class="form-field"><label>부가세 <button class="btn btn-sm" id="exf-split" type="button" title="합계를 공급가액÷1.1로 나눕니다">÷1.1 분리</button></label><input type="text" class="num" id="exf-vat" value="' + fmtMoney(init.vat) + '"></div>' +
+    '<div class="form-field"></div>' +
     '<div class="form-field"><label>비고</label><input type="text" id="exf-memo" value="' + esc(init.memo) + '"></div>' +
     "</div>" +
     '<div id="exf-preview" class="card" style="margin:12px 0 0;padding:8px 12px;background:var(--bg)"></div>' +
@@ -220,14 +221,26 @@ function expenseForm(id) {
     date: q("#exf-date").value || today(),
     biz: q("#exf-biz").value, category: q("#exf-cat").value, partner: q("#exf-partner").value.trim(), desc: q("#exf-desc").value.trim(),
     supply: parseMoney(q("#exf-supply").value), vat: parseMoney(q("#exf-vat").value),
-    total: parseMoney(q("#exf-supply").value) + parseMoney(q("#exf-vat").value),
+    total: parseMoney(q("#exf-total").value),
     vatDeductible: q("#exf-ded").checked, method: q("#exf-method").value, evidence: q("#exf-evidence").value,
     usage: q("#exf-usage").value, bizRatio: Math.max(0, Math.min(1, (parseMoney(q("#exf-ratio").value) || 0) / 100)),
     memo: q("#exf-memo").value.trim()
   });
-  function refresh() {
+  // 합계(결제금액) 기준으로 공급가액·부가세 채우기
+  //  - 부가세공제 체크 → 공급가액 = 합계÷1.1(반올림), 부가세 = 나머지
+  //  - 공제 안 함(간이영수증·면세·개인 지출 등) → 공급가액 = 합계, 부가세 0 (장부엔 어차피 합계가 비용)
+  function splitFromTotal() {
+    const tot = parseMoney(q("#exf-total").value);
+    const ded = q("#exf-ded").checked;
+    const sup = ded ? supplyFromTotal(tot) : tot;
+    q("#exf-supply").value = fmtMoney(sup);
+    q("#exf-vat").value = fmtMoney(tot - sup);
+  }
+  function refresh(e) {
+    const src = e && e.target ? e.target.id : "";
+    if (src === "exf-total" || src === "exf-ded") splitFromTotal();
+    else if (src === "exf-supply" || src === "exf-vat") q("#exf-total").value = fmtMoney(parseMoney(q("#exf-supply").value) + parseMoney(q("#exf-vat").value));
     const d = read();
-    q("#exf-total").value = fmtMoney(d.total);
     q("#exf-ratio-wrap").style.visibility = d.usage === "공용" ? "visible" : "hidden";
     const c = expenseCalc(d);
     q("#exf-preview").innerHTML = "장부 반영 <b>비용금액 " + fmtMoney(c.amount) + "원</b> · 공제 부가세 <b>" + fmtMoney(c.deductVat) + "원</b> · 개인분 " + fmtMoney(c.personal) + "원" +
@@ -235,10 +248,11 @@ function expenseForm(id) {
   }
   overlay.querySelectorAll("input, select").forEach((i) => { i.addEventListener("input", refresh); i.addEventListener("change", refresh); });
   q("#exf-split").addEventListener("click", () => {
-    const tot = parseMoney(q("#exf-supply").value) + parseMoney(q("#exf-vat").value);
+    const tot = parseMoney(q("#exf-total").value) || (parseMoney(q("#exf-supply").value) + parseMoney(q("#exf-vat").value));
     const sup = supplyFromTotal(tot);
-    q("#exf-supply").value = fmtMoney(sup); q("#exf-vat").value = fmtMoney(tot - sup); refresh();
+    q("#exf-total").value = fmtMoney(tot); q("#exf-supply").value = fmtMoney(sup); q("#exf-vat").value = fmtMoney(tot - sup); refresh();
   });
+  q("#exf-total").addEventListener("blur", () => { q("#exf-total").value = fmtMoney(parseMoney(q("#exf-total").value)); });
   refresh();
 
   function save() {
