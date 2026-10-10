@@ -99,7 +99,7 @@ function salesListBookHTML() {
     return "<tr" + (e.amount < 0 ? ' style="color:var(--danger)"' : "") + ">" +
       '<td style="white-space:nowrap">' + esc(r.date) + "</td>" +
       '<td style="min-width:110px"><a href="#" data-book-partner="' + e.pid + '" style="color:inherit;font-weight:600">' + esc(e.pn) + "</a></td>" +
-      "<td>" + esc(e.desc) + (e.memo ? ' <span class="ci-sub">' + esc(e.memo) + "</span>" : "") + "</td>" +
+      "<td>" + esc(e.desc) + (e.memo ? ' <span class="ci-sub">' + esc(e.memo) + "</span>" : "") + saleShipBadge(r.id) + "</td>" +
       '<td class="num">' + won(r.supply) + "</td>" +
       '<td class="num">' + won(r.vat) + "</td>" +
       '<td class="num"><b>' + won(r.total) + "</b></td>" +
@@ -154,6 +154,7 @@ function bindTradeRows(el, kind) {
   el.querySelectorAll("[data-t-status]").forEach((b) => b.addEventListener("click", () => cycleTradeStatus(kind, b.getAttribute("data-t-status"))));
   el.querySelectorAll("[data-t-pay]").forEach((b) => b.addEventListener("click", () => paymentForm(kind, b.getAttribute("data-t-pay"))));
   el.querySelectorAll("[data-t-ship]").forEach((b) => b.addEventListener("click", () => createShipmentFromSale(b.getAttribute("data-t-ship"))));
+  el.querySelectorAll("[data-ship-open]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); shipmentForm(b.getAttribute("data-ship-open"), null); }));
   el.querySelectorAll("[data-t-doc]").forEach((b) => b.addEventListener("click", () => openStatementForSale(b.getAttribute("data-t-doc"))));
 }
 
@@ -431,6 +432,8 @@ function tradeForm(kind, id) {
 
     '<div class="form-field" style="margin-top:12px"><label>메모</label>' +
     '<input type="text" id="trf-memo" value="' + esc(rec ? rec.memo : "") + '"></div>' +
+    // 택배: 거래처를 고르면 주소록에서 수령인·주소가 자동으로 채워진다. 저장하면 배송 건이 만들어져 CJ 송장 파일에 포함
+    (kind === "sales" && isModuleOn("shipping") ? saleShipSectionHTML(rec) : "") +
 
     '<div class="modal-btns" style="margin-top:16px">' +
     '<button class="btn" data-act="cancel">취소</button>' +
@@ -482,6 +485,7 @@ function tradeForm(kind, id) {
     pList().style.display = "none";
     pHidden().dispatchEvent(new Event("change")); // 단가 재적용 리스너
     refreshBalance();
+    if (kind === "sales" && isModuleOn("shipping")) fillSaleShipFromPartner(overlay, pid, lines);
   }
   /** 전잔금 패널: 날짜 이전 미수 + 이번 거래 합계 = 총미수 (매출만) */
   function refreshBalance() {
@@ -637,6 +641,7 @@ function tradeForm(kind, id) {
   }
   bindLineEvents();
 
+  if (kind === "sales" && isModuleOn("shipping")) bindSaleShipSection(overlay, lines);
   overlay.querySelector("#trf-addline").addEventListener("click", () => {
     lines.push({ itemId: "", name: "", qty: 1, unitPrice: 0 });
     refreshLines();
@@ -723,6 +728,7 @@ function tradeForm(kind, id) {
         savedRec = Object.assign({ id: uid("s"), payments: [] }, data);
         state[cfg.listKey].push(savedRec);
       }
+      if (kind === "sales" && isModuleOn("shipping")) saveSaleShipSection(overlay, savedRec);
       // 매출 저장 후 거래명세서 바로 발행 옵션 (명세서 폼이 이 매출로 채워져 열림)
       const toStmt = overlay.querySelector("#trf-tostmt");
       markDirty();
@@ -1140,7 +1146,7 @@ function salesBookHTML(ev, compact) {
       '<td class="num" style="color:#1565c0">' + (e.prev ? won(e.prev) : "") + "</td>" +
       '<td class="num" style="color:#c2185b">' + (isPay ? won(e.amount) : "") + "</td>" +
       '<td class="num"><b>' + won(e.after) + "</b></td>" +
-      '<td style="font-size:11.5px">' + taxMemo + esc(e.memo) + "</td>" +
+      '<td style="font-size:11.5px">' + taxMemo + esc(e.memo) + (e.t === "trade" ? saleShipBadge(e.id) : "") + "</td>" +
       '<td class="num">' + (e.mall ? won(e.amount) : "") + "</td>" +
       (compact ? "" :
         '<td class="actions" style="white-space:nowrap">' + (e.t === "trade" ?
@@ -1432,4 +1438,95 @@ async function deleteBookPayment(pid, date, desc) {
   p.openingPayments = (p.openingPayments || []).filter((x) => !(x.kind === "수금" && x.date === date && matchMemo(x.memo)));
   markDirty(); renderApp();
   toast("입금 기록을 삭제했습니다. 미수 잔액이 다시 늘어납니다.", "success");
+}
+
+
+/* ============================================================
+ * 매출 등록 폼 안의 택배 섹션
+ *  거래처를 고르면 주소록(택배 주소)에서 수령인·전화·주소가 자동으로 채워지고,
+ *  "택배 발송" 체크 상태로 저장하면 배송 건(상품준비)이 만들어진다 → 배송·출고에서 CJ 송장 파일로 내려받아 송장 출력
+ * ============================================================ */
+function saleShipBadge(saleId) {
+  if (!isModuleOn("shipping")) return "";
+  const sh = state.shipments.find((x) => x.saleId === saleId);
+  if (!sh) return "";
+  const color = sh.status === "배송완료" ? "green" : sh.status === "상품준비" ? "orange" : "blue";
+  return ' <a href="#" data-ship-open="' + sh.id + '" class="badge ' + color + '" style="text-decoration:none" title="' + esc((sh.receiver || "") + " · " + (sh.address || "") + (sh.trackingNo ? " · 송장 " + sh.trackingNo : "")) + '">🚚 ' +
+    esc((sh.box || "중") + (sh.trackingNo ? " " + sh.trackingNo : " " + sh.status)) + "</a>";
+}
+
+function saleShipSectionHTML(rec) {
+  const sh = rec ? state.shipments.find((x) => x.saleId === rec.id) : null;
+  const v = (k, d) => esc(sh ? (sh[k] == null ? "" : sh[k]) : (d || ""));
+  return '<details class="card" id="trf-ship" style="margin:12px 0 0;padding:8px 12px"' + (sh ? " open" : "") + '><summary style="cursor:pointer;font-weight:700">🚚 택배 ' +
+    '<span class="sub">거래처를 고르면 주소록에서 자동으로 채워집니다 · 체크하고 저장하면 CJ 송장 파일에 들어갑니다</span></summary>' +
+    '<label style="display:flex;align-items:center;gap:6px;margin:8px 0;cursor:pointer"><input type="checkbox" id="trs-on"' + (sh ? " checked" : "") + ' style="width:auto"> <b>택배 발송</b> <span class="sub" id="trs-src"></span></label>' +
+    '<div class="form-grid" style="grid-template-columns:repeat(4,1fr)">' +
+    '<div class="form-field"><label>수령인</label><input type="text" id="trs-receiver" value="' + v("receiver") + '"></div>' +
+    '<div class="form-field"><label>전화</label><input type="text" id="trs-phone" value="' + v("phone") + '"></div>' +
+    '<div class="form-field"><label>기타 연락처</label><input type="text" id="trs-phone2" value="' + v("phone2") + '"></div>' +
+    '<div class="form-field"><label>박스</label><select id="trs-box">' + ["중", "소", "대"].map((b) => "<option" + ((sh ? sh.box : "중") === b ? " selected" : "") + ">" + b + "</option>").join("") + "</select></div>" +
+    '<div class="form-field" style="grid-column:span 3"><label>주소</label><input type="text" id="trs-addr" value="' + v("address") + '"></div>' +
+    '<div class="form-field"><label>운임</label><select id="trs-freight">' + ["선불", "착불", "신용"].map((b) => "<option" + ((sh ? sh.freight : "선불") === b ? " selected" : "") + ">" + b + "</option>").join("") + "</select></div>" +
+    '<div class="form-field" style="grid-column:span 2"><label>품목명 <span class="sub">(비우면 품목 줄로 자동)</span></label><input type="text" id="trs-item" value="' + v("itemName") + '"></div>' +
+    '<div class="form-field"><label>내품수량</label><input type="text" id="trs-qty" value="' + v("qty") + '"></div>' +
+    '<div class="form-field"><label>송장번호</label><input type="text" id="trs-track" value="' + v("trackingNo") + '" placeholder="출력 후 입력"></div>' +
+    '<div class="form-field" style="grid-column:span 4"><label>배송메세지</label><input type="text" id="trs-msg" value="' + v("msg", "부재시 전화요망") + '"></div>' +
+    "</div></details>";
+}
+
+/** 거래처 선택 → 주소록에서 택배 정보 채움 (사용자가 이미 적은 칸은 덮어쓰지 않음, 수령인이 비어 있을 때만) */
+function fillSaleShipFromPartner(overlay, pid, lines) {
+  const sec = overlay.querySelector("#trf-ship");
+  if (!sec) return;
+  const p = getPartner(pid);
+  if (!p) return;
+  const ab = (state.addressBook || []).find((a) => a.partnerId === pid);
+  const st = p.shipTo || {};
+  const src = ab ? "주소록(" + ab.group + ")" : (st.address ? "거래처 택배주소" : (p.address ? "거래처 기본주소" : ""));
+  const q = (s) => overlay.querySelector(s);
+  const cur = q("#trs-receiver").value.trim();
+  if (cur && cur !== (ab ? ab.name : st.name || p.name) && q("#trs-addr").value.trim()) return; // 다른 수령인을 이미 적었으면 유지
+  q("#trs-receiver").value = ab ? ab.name : (st.name || p.name);
+  q("#trs-phone").value = ab ? ab.phone : (st.phone || p.phone || "");
+  q("#trs-phone2").value = ab ? (ab.phone2 || "") : (st.phone2 || "");
+  q("#trs-addr").value = ab ? ab.address : (st.address || p.address || "");
+  if (ab && ab.msg) q("#trs-msg").value = ab.msg;
+  q("#trs-src").textContent = src ? "← " + src + "에서 자동 입력" : "(주소록에 없는 거래처 — 직접 입력)";
+  // 소매·위탁몰 거래처(소비자가)는 택배가 흔하니 자동 체크, 도매는 사용자가 체크
+  if (!q("#trs-on").checked && src) { q("#trs-on").checked = true; sec.open = true; }
+}
+
+function bindSaleShipSection(overlay, lines) {
+  const on = overlay.querySelector("#trs-on");
+  if (!on) return;
+  on.addEventListener("change", () => { if (on.checked) overlay.querySelector("#trf-ship").open = true; });
+  // 택배 칸에 뭔가 적으면 자동 체크
+  ["#trs-receiver", "#trs-addr", "#trs-track"].forEach((sel) => overlay.querySelector(sel).addEventListener("input", () => { on.checked = true; }));
+  // 수정 폼: 이미 거래처가 있으면 주소 채움
+  const pid = overlay.querySelector("#trf-partner").value;
+  if (pid && !overlay.querySelector("#trs-receiver").value) fillSaleShipFromPartner(overlay, pid, lines);
+}
+
+/** 매출 저장 시 배송 건 생성/갱신 */
+function saveSaleShipSection(overlay, sale) {
+  const on = overlay.querySelector("#trs-on");
+  if (!on) return;
+  const q = (s) => overlay.querySelector(s).value.trim();
+  let sh = state.shipments.find((x) => x.saleId === sale.id);
+  if (!on.checked) return; // 체크 해제 = 배송 건 안 만듦 (기존 건은 그대로 둠 — 배송·출고에서 삭제)
+  const receiver = q("#trs-receiver"), address = q("#trs-addr");
+  if (!receiver || !address) { toast("택배 수령인·주소가 비어 있어 배송 건은 만들지 않았습니다.", "error"); return; }
+  const data = {
+    saleId: sale.id, date: sale.date, receiver, phone: q("#trs-phone"), phone2: q("#trs-phone2"), address,
+    box: overlay.querySelector("#trs-box").value, freight: overlay.querySelector("#trs-freight").value,
+    itemName: q("#trs-item") || saleItemSummary(sale), qty: q("#trs-qty"), msg: q("#trs-msg") || "부재시 전화요망",
+    trackingNo: q("#trs-track"), courier: state.prefs.defaultCourier || "CJ대한통운", partnerId: sale.partnerId
+  };
+  if (sh) { Object.assign(sh, data); if (data.trackingNo && sh.status === "상품준비") sh.status = "출고완료"; }
+  else { sh = Object.assign({ id: uid("sh"), status: data.trackingNo ? "출고완료" : "상품준비", memo: "" }, data); state.shipments.push(sh); }
+  // 수령인 주소를 주소록에 저장 (거래처 연결)
+  upsertAddressBook({ group: "거래처", name: receiver, phone: data.phone, phone2: data.phone2, address, msg: data.msg, partnerId: sale.partnerId });
+  const p = getPartner(sale.partnerId);
+  if (p && !(p.shipTo && p.shipTo.address)) p.shipTo = { name: receiver, phone: data.phone, phone2: data.phone2, address, msg: data.msg };
 }

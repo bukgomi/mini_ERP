@@ -215,7 +215,9 @@ async function parseXlsx(file, sheetName) {
       const wbDoc = dp.parseFromString(wb, "application/xml");
       const allSheets = [...wbDoc.getElementsByTagName("sheet")];
       // 시트 이름을 지정하면 그 시트(띄어쓰기 무시 부분 일치), 아니면 첫 시트
-      const firstSheet = (sheetName && allSheets.find((sh) => String(sh.getAttribute("name") || "").replace(/\s+/g, "").includes(String(sheetName).replace(/\s+/g, "")))) || allSheets[0];
+      const want = String(sheetName || "").replace(/\s+/g, "");
+      const firstSheet = (want && (allSheets.find((sh) => String(sh.getAttribute("name") || "").replace(/\s+/g, "") === want) ||
+        allSheets.find((sh) => String(sh.getAttribute("name") || "").replace(/\s+/g, "").includes(want)))) || allSheets[0];
       const rid = firstSheet && (firstSheet.getAttribute("r:id") || firstSheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"));
       if (rid) {
         const relDoc = dp.parseFromString(rels, "application/xml");
@@ -283,6 +285,49 @@ async function parseXlsx(file, sheetName) {
     rows.push(row);
   });
   return rows;
+}
+
+/** .xlsx 안의 시트 이름 목록 */
+async function listXlsxSheets(file) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  // ZIP 안의 xl/workbook.xml만 빠르게 찾기 위해 parseXlsx와 같은 방식으로 읽는다 (간단히 전체 재사용)
+  const dv = new DataView(buf.buffer);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65558); i--) { if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; } }
+  if (eocd < 0) throw new Error("올바른 엑셀(.xlsx) 파일이 아닙니다.");
+  const cdCount = dv.getUint16(eocd + 10, true);
+  let pos = dv.getUint32(eocd + 16, true);
+  const dec = new TextDecoder();
+  for (let n = 0; n < cdCount; n++) {
+    if (dv.getUint32(pos, true) !== 0x02014b50) break;
+    const method = dv.getUint16(pos + 10, true), compSize = dv.getUint32(pos + 20, true);
+    const nameLen = dv.getUint16(pos + 28, true), extraLen = dv.getUint16(pos + 30, true), commentLen = dv.getUint16(pos + 32, true);
+    const lho = dv.getUint32(pos + 42, true);
+    const name = dec.decode(buf.subarray(pos + 46, pos + 46 + nameLen));
+    if (name === "xl/workbook.xml") {
+      const nl = dv.getUint16(lho + 26, true), el = dv.getUint16(lho + 28, true);
+      const data = buf.subarray(lho + 30 + nl + el, lho + 30 + nl + el + compSize);
+      let xml;
+      if (method === 0) xml = dec.decode(data);
+      else xml = await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+      const doc = new DOMParser().parseFromString(xml, "application/xml");
+      return [...doc.getElementsByTagName("sheet")].map((sh) => sh.getAttribute("name") || "");
+    }
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return [];
+}
+
+/** 업로드 파일의 모든 시트 → [{ name, rows }] (CSV는 시트 1개) */
+async function parseAllSheets(file) {
+  const name = (file.name || "").toLowerCase();
+  if (name.endsWith(".csv")) return [{ name: "csv", rows: parseCSVText(await file.text()) }];
+  if (name.endsWith(".xls")) throw new Error("구형 .xls 형식은 지원하지 않습니다. 엑셀에서 [다른 이름으로 저장 → .xlsx]로 변환해 주세요.");
+  if (!name.endsWith(".xlsx")) throw new Error(".xlsx 또는 .csv 파일만 업로드할 수 있습니다.");
+  const names = await listXlsxSheets(file);
+  const out = [];
+  for (const n of names) out.push({ name: n, rows: await parseXlsx(file, n) });
+  return out;
 }
 
 /* ============================================================
