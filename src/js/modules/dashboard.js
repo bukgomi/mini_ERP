@@ -25,6 +25,9 @@ function renderDashboard(el) {
 
   let html = '<div class="page-title">📊 대시보드</div>';
 
+  // ---- 할 일·일정 (맨 위 — 앱을 열면 오늘 할 일부터) ----
+  html += todoWidgetHTML();
+
   // ---- 통계 타일 (켜진 모듈 것만) ----
   html += '<div class="stat-tiles">';
   if (isModuleOn("sales")) html += tile("이번 달 매출", fmtMoney(salesTotal) + "원", "blue", "💰");
@@ -86,6 +89,7 @@ function renderDashboard(el) {
   }
 
   el.innerHTML = html;
+  bindTodoWidget(el);
 
   // 차트 툴팁 이벤트 (SVG rect에 데이터 속성)
   const tooltip = document.getElementById("chart-tooltip");

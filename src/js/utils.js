@@ -248,6 +248,12 @@ function monthEnd() {
 }
 
 /** 두 날짜(YYYY-MM-DD) 사이 일수 차이 */
+/** 날짜 문자열에 n일 더하기 (로컬 기준 — toISOString은 UTC라 한국에서 하루 밀림) */
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + "T00:00:00"); d.setDate(d.getDate() + n);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
 function daysBetween(fromStr, toStr) {
   const a = new Date(fromStr + "T00:00:00");
   const b = new Date(toStr + "T00:00:00");

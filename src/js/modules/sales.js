@@ -181,7 +181,8 @@ function renderTradeList(kind, el) {
         '<button class="btn btn-sm' + (tradeView.sales === v ? " btn-primary" : "") + '" data-view="' + v + '">' + t + "</button>").join("") +
       "</span>" : "") +
     '<span class="spacer"></span>' +
-    (kind === "sales" && !popupMode ? '<button class="btn" id="btn-open-balance" title="새 창(읽기 전용)으로 열립니다 — 목록·장부를 보면서 옆에 두고 확인">🗗 거래처별 잔금 새 창</button>' : "") +
+    (kind === "sales" && !popupMode ? '<button class="btn" id="btn-open-balance" title="새 창(읽기 전용)으로 열립니다 — 목록·장부를 보면서 옆에 두고 확인">🗗 거래처별 잔금 새 창</button> ' +
+      '<button class="btn" id="btn-todo-add" title="내일 할 일을 적어두면 대시보드 맨 위에 뜹니다">📝 할 일 적기</button>' : "") +
     '<button class="btn" id="btn-trade-template">📄 엑셀 양식 받기</button>' +
     '<label class="btn">📥 엑셀 업로드<input type="file" id="trade-import" accept=".xlsx,.csv" style="display:none"></label>' +
     '<button class="btn" id="btn-trade-xlsx">📤 엑셀 다운로드</button>' +
@@ -208,6 +209,8 @@ function renderTradeList(kind, el) {
 
   // 보기 전환
   el.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => { tradeView.sales = b.getAttribute("data-view"); renderApp(); }));
+  const todoBtn = el.querySelector("#btn-todo-add");
+  if (todoBtn) todoBtn.addEventListener("click", () => todoForm(null));
   const openBal = el.querySelector("#btn-open-balance");
   if (openBal) openBal.addEventListener("click", () => openPopupWindow("sales", "balance")); // 별도 창 — 5초마다 자동 갱신
   // 거래처 이름 클릭 → 그 거래처 장부 모달 / 입금 줄 삭제

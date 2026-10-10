@@ -71,6 +71,7 @@ function defaultState() {
     cashEntries: [],   // 수동 입출금
     expenseCategories: EXP_ACCOUNTS.slice(), // 경비 계정과목 (세무 계정 기준, 설정에서 추가 가능)
     expenseMethods: EXP_METHODS_DEFAULT.slice(), // 결제수단 목록 (경비 입력 드롭다운)
+    todos: [],         // 할 일·일정 { id, date, text, partnerId, done, doneAt, createdAt } — 대시보드 위젯
     taxInvoices: [],   // 세금계산서 발행대장 { id, date, biz(임대/도매), kind(발행구분), partner, bizNumber, item, supply, vat, total, approvalNo, memo }
     tenants: [],       // 임대 관리 — 임차인 { id, name, rent(월 임대료), deposit, start, end, status, memo }
     // 세무 기준값 (세무·신고 모듈)
@@ -123,7 +124,7 @@ function migrateState(raw) {
   s.company = Object.assign(defaultState().company, s.company || {});
   s.modules = Object.assign(defaultState().modules, s.modules || {});
   ["partners", "items", "sales", "purchases", "shipments", "adjustments",
-   "expenses", "receipts", "documents", "cashEntries", "closedYears", "taxInvoices", "tenants"].forEach((k) => {
+   "expenses", "receipts", "documents", "cashEntries", "closedYears", "taxInvoices", "tenants", "todos"].forEach((k) => {
     if (!Array.isArray(s[k])) s[k] = [];
   });
   s.tax = Object.assign(defaultState().tax, s.tax || {});

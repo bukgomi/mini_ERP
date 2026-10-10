@@ -474,3 +474,15 @@ details.month-group[open] summary { border-radius: 10px 10px 0 0; }
 /* 인쇄 전용 영역 (평소엔 숨김) */
 #print-root { display: none; }
 body.print-preview #print-root { display: block; }
+
+/* 할 일·일정 위젯 (대시보드) */
+.todo-entry { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.todo-entry input[type="text"]:not(#todo-partner) { flex: 1; min-width: 220px; }
+.todo-entry input[type="date"] { width: auto; }
+.todo-group { margin: 8px 0 4px; }
+.todo-item { display: flex; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: 1px dashed var(--border); font-size: 13.5px; }
+.todo-item .todo-date { color: var(--text-dim); font-size: 12px; white-space: nowrap; min-width: 112px; }
+.todo-item .todo-text { flex: 1; }
+.todo-item.done .todo-text { text-decoration: line-through; color: var(--text-dim); }
+.todo-item .btn-sm { padding: 2px 7px; font-size: 12px; opacity: .6; }
+.todo-item:hover .btn-sm { opacity: 1; }
