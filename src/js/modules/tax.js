@@ -190,7 +190,8 @@ function renderTaxInvoices(el) {
 function taxInvoiceForm(id, preset) {
   if (guardReadOnly()) return;
   const rec = id ? state.taxInvoices.find((x) => x.id === id) : null;
-  const init = Object.assign({ date: today(), biz: "도매", kind: "세금계산서", partner: "", bizNumber: "", item: "", supply: 0, vat: 0, total: 0, approvalNo: "", memo: "" }, preset || {}, rec || {});
+  const init = Object.assign({ date: today(), biz: "도매", kind: "세금계산서", partner: "", bizNumber: "", item: "", supply: 0, vat: 0, total: 0, approvalNo: "", memo: "", saleIds: [] }, preset || {}, rec || {});
+  const linkedSales = (init.saleIds || []).map((sid) => getSale(sid)).filter(Boolean);
   const opt = (arr, cur) => arr.map((v) => '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>").join("");
   const names = new Set();
   state.tenants.forEach((t) => names.add(t.name));
@@ -200,6 +201,8 @@ function taxInvoiceForm(id, preset) {
   overlay.className = "modal-overlay";
   overlay.innerHTML =
     '<div class="modal-box wide"><h3 style="margin-bottom:14px">' + (id ? "발행 기록 수정" : "세금계산서 발행 등록") + "</h3>" +
+    (linkedSales.length ? '<div class="sub" style="margin:-6px 0 10px;padding:6px 10px;background:var(--bg);border-radius:6px">🔗 연결 매출: ' +
+      linkedSales.map((sl) => esc(sl.date + " " + partnerName(sl.partnerId) + " " + fmtMoney(sl.total) + "원")).join(" · ") + " — 저장하면 매출 관리 줄에 🧾 발행 표시가 붙습니다</div>" : "") +
     '<div class="form-grid" style="grid-template-columns:repeat(3,1fr)">' +
     '<div class="form-field"><label>작성일자</label><input type="date" id="tif-date" value="' + esc(init.date) + '"></div>' +
     '<div class="form-field"><label>분류</label><select id="tif-biz">' + opt(TAX_INV_BIZ, init.biz) + "</select></div>" +
@@ -244,7 +247,7 @@ function taxInvoiceForm(id, preset) {
       d.total = d.supply + d.vat;
       if (!d.partner) { toast("거래처를 입력하세요.", "error"); return; }
       if (!d.supply) { toast("공급가액을 입력하세요.", "error"); return; }
-      if (rec) Object.assign(rec, d); else state.taxInvoices.push(Object.assign({ id: uid("ti") }, d));
+      if (rec) Object.assign(rec, d); else state.taxInvoices.push(Object.assign({ id: uid("ti"), saleIds: init.saleIds || [] }, d));
       taxYear = d.date.slice(0, 4);
       markDirty(); overlay.remove(); renderApp();
       toast("발행 기록을 " + (id ? "수정" : "등록") + "했습니다.", "success");
@@ -677,4 +680,49 @@ function exportTaxPackage() {
   ];
   downloadBlob("세무자료_" + y + "_" + today() + ".xlsx", makeXlsx(sheets));
   toast("세무사 전달용 엑셀(시트 6개)을 내려받았습니다.", "success");
+}
+
+
+/* ---------- 매출 건 ↔ 세금계산서 연결 (매출 관리 표시용) ---------- */
+/** 매출 건에 발행된 세금계산서: saleIds 연결 우선, 없으면 거래처명·같은 달·합계 일치로 추정 */
+function taxInvoiceOfSale(sale) {
+  if (!sale || !isModuleOn("tax")) return null;
+  const inv = state.taxInvoices || [];
+  const linked = inv.find((x) => Array.isArray(x.saleIds) && x.saleIds.includes(sale.id));
+  if (linked) return linked;
+  const p = getPartner(sale.partnerId);
+  if (!p || !sale.total) return null;
+  const nz = (v) => String(v || "").replace(/\(.*?\)/g, "").replace(/\s+/g, "");
+  const pn = nz(p.name);
+  if (!pn) return null;
+  return inv.find((x) => !(x.saleIds && x.saleIds.length) && x.total === sale.total && String(x.date || "").slice(0, 7) === String(sale.date || "").slice(0, 7) &&
+    (nz(x.partner) === pn || nz(x.partner).includes(pn) || pn.includes(nz(x.partner)))) || null;
+}
+
+/** 매출 줄에 붙는 🧾 발행 배지 (클릭 → 발행 기록 수정) */
+function saleTaxBadge(saleId) {
+  const r = taxInvoiceOfSale(getSale(saleId));
+  if (!r) return "";
+  const label = r.kind === "세금계산서" ? "계산서 발행" : r.kind === "계산서(면세)" ? "계산서(면세) 발행" : r.kind;
+  return ' <a href="#" class="badge blue" data-ti-open="' + r.id + '" title="' + esc(r.kind + " " + r.date + (r.approvalNo ? " · 승인 " + r.approvalNo : "") + " · " + fmtMoney(r.total) + "원 — 클릭하면 수정") + '">🧾 ' + esc(label) + " " + esc(String(r.date || "").slice(5)) + "</a>";
+}
+
+/** 매출 건으로 세금계산서 발행 등록 (이미 있으면 그 기록을 연다) */
+function issueTaxInvoiceFromSale(saleId) {
+  if (guardReadOnly()) return;
+  const sale = getSale(saleId);
+  if (!sale) return;
+  const ex = taxInvoiceOfSale(sale);
+  if (ex) {
+    if (!Array.isArray(ex.saleIds)) ex.saleIds = [];
+    if (!ex.saleIds.includes(sale.id)) { ex.saleIds.push(sale.id); markDirty(); }
+    taxInvoiceForm(ex.id);
+    return;
+  }
+  const p = getPartner(sale.partnerId) || {};
+  const supply = sale.supply || 0, vat = sale.vat == null ? calcVat(supply) : sale.vat;
+  taxInvoiceForm(null, {
+    date: sale.date, biz: "도매", kind: vat ? "세금계산서" : "계산서(면세)", partner: p.name || "", bizNumber: p.bizNumber || "",
+    item: saleItemSummary(sale), supply, vat, total: supply + vat, saleIds: [sale.id]
+  });
 }

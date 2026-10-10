@@ -99,7 +99,7 @@ function salesListBookHTML() {
     return "<tr" + (e.amount < 0 ? ' style="color:var(--danger)"' : "") + ">" +
       '<td style="white-space:nowrap">' + esc(r.date) + "</td>" +
       '<td style="min-width:110px"><a href="#" data-book-partner="' + e.pid + '" style="color:inherit;font-weight:600">' + esc(e.pn) + "</a></td>" +
-      "<td>" + esc(e.desc) + (e.memo ? ' <span class="ci-sub">' + esc(e.memo) + "</span>" : "") + saleShipBadge(r.id) + "</td>" +
+      "<td>" + esc(e.desc) + (e.memo ? ' <span class="ci-sub">' + esc(e.memo) + "</span>" : "") + saleTaxBadge(r.id) + saleShipBadge(r.id) + "</td>" +
       '<td class="num">' + won(r.supply) + "</td>" +
       '<td class="num">' + won(r.vat) + "</td>" +
       '<td class="num"><b>' + won(r.total) + "</b></td>" +
@@ -112,6 +112,7 @@ function salesListBookHTML() {
       '<button class="btn btn-sm" data-t-pay="' + r.id + '">수금</button> ' +
       (isModuleOn("documents") ? '<button class="btn btn-sm" data-t-doc="' + r.id + '">명세서</button> ' : "") +
       (isModuleOn("shipping") ? '<button class="btn btn-sm" data-t-ship="' + r.id + '">배송</button> ' : "") +
+      (isModuleOn("tax") && e.amount > 0 ? '<button class="btn btn-sm" data-t-tax="' + r.id + '" title="세금계산서 발행 기록 (세무·신고 자료 발행대장에 들어감)">계산서</button> ' : "") +
       '<button class="btn btn-sm" data-t-edit="' + r.id + '">수정</button> ' +
       '<button class="btn btn-sm" data-t-del="' + r.id + '">삭제</button></td></tr>';
   }).join("");
@@ -156,6 +157,8 @@ function bindTradeRows(el, kind) {
   el.querySelectorAll("[data-t-ship]").forEach((b) => b.addEventListener("click", () => createShipmentFromSale(b.getAttribute("data-t-ship"))));
   el.querySelectorAll("[data-ship-open]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); shipmentForm(b.getAttribute("data-ship-open"), null); }));
   el.querySelectorAll("[data-t-doc]").forEach((b) => b.addEventListener("click", () => openStatementForSale(b.getAttribute("data-t-doc"))));
+  el.querySelectorAll("[data-t-tax]").forEach((b) => b.addEventListener("click", () => issueTaxInvoiceFromSale(b.getAttribute("data-t-tax"))));
+  el.querySelectorAll("[data-ti-open]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); taxInvoiceForm(b.getAttribute("data-ti-open")); }));
 }
 
 function renderTradeList(kind, el) {
@@ -1146,7 +1149,7 @@ function salesBookHTML(ev, compact) {
       '<td class="num" style="color:#1565c0">' + (e.prev ? won(e.prev) : "") + "</td>" +
       '<td class="num" style="color:#c2185b">' + (isPay ? won(e.amount) : "") + "</td>" +
       '<td class="num"><b>' + won(e.after) + "</b></td>" +
-      '<td style="font-size:11.5px">' + taxMemo + esc(e.memo) + (e.t === "trade" ? saleShipBadge(e.id) : "") + "</td>" +
+      '<td style="font-size:11.5px">' + taxMemo + esc(e.memo) + (e.t === "trade" ? saleTaxBadge(e.id) + saleShipBadge(e.id) : "") + "</td>" +
       '<td class="num">' + (e.mall ? won(e.amount) : "") + "</td>" +
       (compact ? "" :
         '<td class="actions" style="white-space:nowrap">' + (e.t === "trade" ?
