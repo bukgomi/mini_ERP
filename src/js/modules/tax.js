@@ -161,7 +161,7 @@ function renderTaxInvoices(el) {
     '<button class="btn btn-sm" id="btn-ti-export">엑셀 내려받기</button> ' +
     '<button class="btn btn-primary" id="btn-ti-add">+ 발행 등록</button></div>' +
     '<div class="card"><h3>' + esc(taxYear) + "년 분기·기수별 발행 합계 <span class=\"sub\">공급가액은 부가세 제외. 세무사에게 분기 자료를 줄 때 분기 필터로 걸러 [엑셀 내려받기]</span></h3>" + invoicePeriodTable(inv) + "</div>" +
-    '<div class="card"><div class="table-wrap"><table class="grid compact"><thead><tr><th>작성일자</th><th>분류</th><th>발행구분</th><th>거래처</th><th>사업자번호</th><th>품목</th>' +
+    '<div class="card"><div class="table-wrap book-scroll"><table class="grid compact"><thead><tr><th>작성일자</th><th>분류</th><th>발행구분</th><th>거래처</th><th>사업자번호</th><th>품목</th>' +
     '<th class="num">공급가액</th><th class="num">세액</th><th class="num">합계</th><th>승인번호</th><th>비고</th><th>기수·분기</th><th></th></tr></thead><tbody>' +
     (list.length ? list.map((r) => "<tr><td>" + esc(r.date) + "</td>" +
       '<td><span class="badge ' + (r.biz === "임대" ? "purple" : "blue") + '">' + esc(r.biz) + "</span></td>" +

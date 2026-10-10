@@ -90,7 +90,7 @@ function computeShipList() {
 
 /** 배송 목록 표 HTML */
 function shipTableHTML(list) {
-  return '<div class="table-wrap"><table class="grid">' +
+  return '<div class="table-wrap book-scroll"><table class="grid">' +
     "<thead><tr><th>날짜</th><th>수령인</th><th>연락처</th><th>주소</th><th>박스</th><th>품목·수량</th><th>매출 건</th>" +
     "<th>택배사</th><th>송장번호</th><th>상태</th><th></th></tr></thead><tbody>" +
     (list.length ? list.map((sh) => {

@@ -86,7 +86,7 @@ function renderExpenses(el) {
     sumRow("미분류 (사용처 미선택)", rowNone) +
     "</tbody></table></div></div>" +
 
-    '<div class="card"><div class="table-wrap"><table class="grid compact">' +
+    '<div class="card"><div class="table-wrap book-scroll"><table class="grid compact">' +
     "<thead><tr><th>날짜</th><th>구분</th><th>계정과목</th><th>거래처</th><th>내용</th>" +
     '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th><th>공제</th><th class="num">비용금액</th>' +
     "<th>결제수단</th><th>증빙</th><th>사용처</th><th>확인필요</th>" +

@@ -272,6 +272,9 @@ input.num { text-align: right; font-variant-numeric: tabular-nums; }
 .book-scroll table.grid thead th { position: sticky; top: 0; z-index: 6; background: var(--card-bg); box-shadow: 0 1px 0 var(--border); }
 .book-scroll tr.book-entry td { position: sticky; z-index: 5; background: var(--bg); box-shadow: 0 2px 0 var(--border); }
 .book-scroll tr.total-row td { position: sticky; bottom: 0; z-index: 4; background: var(--card-bg); box-shadow: 0 -1px 0 var(--border); }
+.book-scroll tfoot tr.total-row td { bottom: 0; }
+/* 가로 스크롤바가 항상 보이도록 (긴 표는 표 안에서만 세로 스크롤) */
+.book-scroll { scrollbar-gutter: stable; }
 table.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.grid th, table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: left; }
 table.grid th {
