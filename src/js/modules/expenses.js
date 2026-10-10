@@ -10,8 +10,12 @@
 let expYear = "";        // 조회 연도
 let expMonth = "";       // "" = 연간 전체, "1"~"12"
 let expBizFilter = "";   // 구분 필터
-let expUsageFilter = ""; // 사용처 필터
+let expUsageFilter = ""; // 사용처 필터 ("(미선택)" = 비어 있는 것만)
+let expMethodFilter = ""; // 결제수단 필터
+let expEvidFilter = "";   // 증빙 필터 ("(미입력)" = 비어 있는 것만)
+let expCheckOnly = false; // 확인필요 건만
 let expSearch = "";      // 거래처·내용 검색
+const EXP_EMPTY = "(미입력)";
 
 function renderExpenses(el) {
   if (!expYear) expYear = String(new Date().getFullYear());
@@ -19,7 +23,10 @@ function renderExpenses(el) {
   const list = yearRows
     .filter((e) => !expMonth || String(Number((e.date || "").slice(5, 7))) === expMonth)
     .filter((e) => !expBizFilter || (e.biz || "") === expBizFilter)
-    .filter((e) => !expUsageFilter || (e.usage || "") === expUsageFilter)
+    .filter((e) => !expUsageFilter || (expUsageFilter === EXP_EMPTY ? !e.usage : (e.usage || "") === expUsageFilter))
+    .filter((e) => !expMethodFilter || (expMethodFilter === EXP_EMPTY ? !e.method : (e.method || "") === expMethodFilter))
+    .filter((e) => !expEvidFilter || (expEvidFilter === EXP_EMPTY ? !e.evidence : (e.evidence || "") === expEvidFilter))
+    .filter((e) => !expCheckOnly || !!expenseCalc(e).check)
     .filter((e) => {
       if (!expSearch) return true;
       const q = expSearch.replace(/\s+/g, "").toLowerCase();
@@ -60,9 +67,15 @@ function renderExpenses(el) {
     '<b>연도</b> <select id="exp-year">' + [...years].sort().reverse().map((y) => '<option value="' + y + '"' + (y === expYear ? " selected" : "") + ">" + y + "년</option>").join("") + "</select>" +
     '<select id="exp-month"><option value="">연간 전체</option>' + months.map((m) => '<option value="' + m + '"' + (String(m) === expMonth ? " selected" : "") + ">" + m + "월</option>").join("") + "</select>" +
     '<select id="exp-biz"><option value="">구분 전체</option>' + EXP_BIZ.map((b) => "<option" + (b === expBizFilter ? " selected" : "") + ">" + b + "</option>").join("") + "</select>" +
-    '<select id="exp-usage"><option value="">사용처 전체</option>' + EXP_USAGE.map((u) => "<option" + (u === expUsageFilter ? " selected" : "") + ">" + u + "</option>").join("") + "</select>" +
-    '<input type="text" id="exp-search" placeholder="거래처·내용 검색" value="' + esc(expSearch) + '" style="width:170px">' +
-    '<span class="sub">' + list.length + "건</span></div>" +
+    '<select id="exp-usage"><option value="">사용처 전체</option>' + EXP_USAGE.concat([EXP_EMPTY]).map((u) => "<option" + (u === expUsageFilter ? " selected" : "") + ">" + (u === EXP_EMPTY ? "사용처 미선택" : u) + "</option>").join("") + "</select>" +
+    '<select id="exp-method"><option value="">결제수단 전체</option>' + expenseMethodList().concat([EXP_EMPTY]).map((u) => '<option value="' + esc(u) + '"' + (u === expMethodFilter ? " selected" : "") + ">" + esc(u === EXP_EMPTY ? "결제수단 미입력" : u) + "</option>").join("") + "</select>" +
+    '<select id="exp-evid"><option value="">증빙 전체</option>' + EXP_EVIDENCE.concat([EXP_EMPTY]).map((u) => '<option value="' + esc(u) + '"' + (u === expEvidFilter ? " selected" : "") + ">" + esc(u === EXP_EMPTY ? "증빙 미입력" : u) + "</option>").join("") + "</select>" +
+    '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="exp-check"' + (expCheckOnly ? " checked" : "") + ' style="width:auto"> 확인필요만 <span class="badge red">' + yearRows.filter((e) => !!expenseCalc(e).check).length + "</span></label>" +
+    '<input type="text" id="exp-search" placeholder="거래처·내용 검색" value="' + esc(expSearch) + '" style="width:150px">' +
+    '<span class="sub">' + list.length + "건</span>" +
+    ((expBizFilter || expUsageFilter || expMethodFilter || expEvidFilter || expCheckOnly || expSearch) ? ' <button class="btn btn-sm" id="exp-clear">필터 해제</button>' : "") +
+    "</div>" +
+    '<div class="sub" style="margin:-4px 0 8px">표에서 결제수단·증빙·사용처를 바로 고르면 저장됩니다 (공용은 사업비율 % 입력)</div>' +
 
     '<div class="card"><h3>' + esc(expYear) + "년 월별 지출 합계 <span class=\"sub\">집·사무실 모두 적고 사용처로 분류 — 집은 비용에서 빠지고 공용은 사업비율만큼만 들어갑니다</span></h3>" +
     '<div class="table-wrap"><table class="grid compact"><thead><tr><th>구분</th>' + months.map((m) => '<th class="num">' + m + "월</th>").join("") + '<th class="num">연간</th></tr></thead><tbody>' +
@@ -93,10 +106,11 @@ function renderExpenses(el) {
         '<td class="num">' + fmtMoney(c.total) + "</td>" +
         "<td>" + (e.vatDeductible ? '<span class="badge green">O</span>' : "X") + "</td>" +
         '<td class="num"><b>' + fmtMoney(c.amount) + "</b></td>" +
-        "<td>" + esc(e.method || "") + "</td>" +
-        "<td>" + esc(e.evidence || "") + "</td>" +
-        "<td>" + esc(e.usage || "") + (e.usage === "공용" ? " " + Math.round((Number(e.bizRatio) || 0) * 100) + "%" : "") + "</td>" +
-        "<td>" + (c.check ? '<span class="badge red">' + esc(c.check) + "</span>" : "") + "</td>" +
+        '<td style="white-space:nowrap">' + (readOnlyMode ? esc(e.method || "") : inlineSel("method", e.id, expenseMethodList(), e.method)) + "</td>" +
+        '<td style="white-space:nowrap">' + (readOnlyMode ? esc(e.evidence || "") : inlineSel("evidence", e.id, EXP_EVIDENCE, e.evidence)) + "</td>" +
+        '<td style="white-space:nowrap">' + (readOnlyMode ? esc(e.usage || "") + (e.usage === "공용" ? " " + Math.round((Number(e.bizRatio) || 0) * 100) + "%" : "")
+          : inlineSel("usage", e.id, EXP_USAGE, e.usage) + (e.usage === "공용" ? ' <input type="text" class="num" data-exp-ratio="' + e.id + '" value="' + Math.round((Number(e.bizRatio) || 0) * 100) + '" style="width:44px;padding:2px 4px;font-size:12px" title="사업비율 %">%' : "")) + "</td>" +
+        '<td style="white-space:nowrap">' + (c.check ? '<span class="badge red">' + esc(c.check) + "</span>" : "") + "</td>" +
         (isModuleOn("receipts")
           ? "<td>" + (receipt ? '<span class="badge green">있음</span>' : '<button class="btn btn-sm" data-attach="' + e.id + '">첨부</button>') + "</td>"
           : "") +
@@ -113,6 +127,28 @@ function renderExpenses(el) {
   el.querySelector("#exp-month").addEventListener("change", (e) => { expMonth = e.target.value; renderApp(); });
   el.querySelector("#exp-biz").addEventListener("change", (e) => { expBizFilter = e.target.value; renderApp(); });
   el.querySelector("#exp-usage").addEventListener("change", (e) => { expUsageFilter = e.target.value; renderApp(); });
+  el.querySelector("#exp-method").addEventListener("change", (e) => { expMethodFilter = e.target.value; renderApp(); });
+  el.querySelector("#exp-evid").addEventListener("change", (e) => { expEvidFilter = e.target.value; renderApp(); });
+  el.querySelector("#exp-check").addEventListener("change", (e) => { expCheckOnly = e.target.checked; renderApp(); });
+  const clr = el.querySelector("#exp-clear");
+  if (clr) clr.addEventListener("click", () => { expBizFilter = expUsageFilter = expMethodFilter = expEvidFilter = expSearch = ""; expCheckOnly = false; renderApp(); });
+  // 표 안에서 바로 분류 (결제수단·증빙·사용처·사업비율)
+  el.querySelectorAll("[data-exp-set]").forEach((sel) => sel.addEventListener("change", () => {
+    if (guardReadOnly()) return;
+    const rec = state.expenses.find((x) => x.id === sel.getAttribute("data-exp-id"));
+    if (!rec) return;
+    const f = sel.getAttribute("data-exp-set");
+    rec[f] = sel.value;
+    if (f === "usage") { if (sel.value === "공용" && !(Number(rec.bizRatio) > 0 && Number(rec.bizRatio) < 1)) rec.bizRatio = 0.5; else if (sel.value !== "공용") rec.bizRatio = 1; }
+    markDirty(); renderApp();
+  }));
+  el.querySelectorAll("[data-exp-ratio]").forEach((inp) => inp.addEventListener("change", () => {
+    if (guardReadOnly()) return;
+    const rec = state.expenses.find((x) => x.id === inp.getAttribute("data-exp-ratio"));
+    if (!rec) return;
+    rec.bizRatio = Math.max(0, Math.min(1, (parseMoney(inp.value) || 0) / 100));
+    markDirty(); renderApp();
+  }));
   const srch = el.querySelector("#exp-search");
   srch.addEventListener("input", () => { expSearch = srch.value; const pos = srch.selectionStart; renderApp(); const n = el.querySelector("#exp-search"); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
   el.querySelector("#btn-add-exp").addEventListener("click", () => expenseForm(null));
@@ -124,6 +160,15 @@ function renderExpenses(el) {
   el.querySelectorAll("[data-attach]").forEach((b) => b.addEventListener("click", () => {
     receiptUploadForm({ kind: "expense", id: b.getAttribute("data-attach") });
   }));
+}
+
+/** 표 안 분류용 작은 드롭다운 (빈 값 = "—") */
+function inlineSel(field, id, list, cur) {
+  const items = list.slice();
+  if (cur && !items.includes(cur)) items.push(cur);
+  const w = { method: 118, evidence: 150, usage: 74 }[field] || 100;
+  return '<select data-exp-set="' + field + '" data-exp-id="' + id + '" style="padding:2px 4px;font-size:12px;height:auto;width:' + w + 'px;min-width:' + w + 'px' + (cur ? "" : ";color:var(--danger);border-color:var(--danger)") + '">' +
+    '<option value="">—</option>' + items.map((v) => '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>").join("") + "</select>";
 }
 
 /** 결제수단 목록: 설정 목록 + 이미 기록에 쓰인 값 */
