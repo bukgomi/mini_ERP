@@ -203,6 +203,9 @@ function renderTradeList(kind, el) {
     "</span>" +
     (kind === "sales" && tradeView.sales !== "balance" ?
       '<label style="display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" id="tf-newest"' + (bookNewestFirst ? " checked" : "") + ' style="width:auto"> 최근 줄 위로</label>' : "") +
+    (kind === "sales" && tradeView.sales === "balance" ?
+      '<label style="display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" id="tf-unpaid"' + (balOnlyUnpaid ? " checked" : "") + ' style="width:auto"> 미수 있는 곳만</label>' +
+      '<button class="btn btn-sm" id="btn-bal-print" title="지금 보이는 거래처를 A4 한 장에 맞춰 인쇄">🖨 인쇄 (A4 1장)</button>' : "") +
     '<select id="tf-partner"><option value="">전체 거래처</option>' +
     state.partners.map((p) => '<option value="' + p.id + '"' + (f.partnerId === p.id ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") +
     "</select>" +
@@ -253,6 +256,10 @@ function renderTradeList(kind, el) {
   el.querySelector("#tf-partner").addEventListener("change", (e) => { f.partnerId = e.target.value; renderApp(); });
   const newestChk = el.querySelector("#tf-newest");
   if (newestChk) newestChk.addEventListener("change", (e) => { bookNewestFirst = e.target.checked; renderApp(); });
+  const unpaidChk = el.querySelector("#tf-unpaid");
+  if (unpaidChk) unpaidChk.addEventListener("change", (e) => { balOnlyUnpaid = e.target.checked; renderApp(); });
+  const balPrint = el.querySelector("#btn-bal-print");
+  if (balPrint) balPrint.addEventListener("click", () => printBalanceSheet(partnerBalanceRows(tradeFilter.sales), tradeFilter.sales));
   // 검색: 화면 전체를 다시 그리지 않고 표만 부분 갱신
   // (전체 재렌더 시 입력칸이 새로 만들어져 한글 조합(IME)이 끊기는 버그 방지)
   el.querySelector("#tf-search").addEventListener("input", (e) => {
@@ -1206,7 +1213,54 @@ function partnerBalanceRows(f) {
     rows.push({ p, opening, sales, paid, bal, payer: payer.trim(), bank: bank.trim(), lastTax });
   });
   rows.sort((a, b) => a.p.name.localeCompare(b.p.name, "ko"));
-  return rows;
+  return balOnlyUnpaid ? rows.filter((r) => r.bal > 0) : rows;
+}
+let balOnlyUnpaid = false; // 거래처별 잔금: 미수 잔액이 있는 거래처만
+
+/** 거래처별 잔금(미수 현황) 인쇄 — A4 세로 1장에 맞춤. 거래처가 많으면 두 단으로, 글자 크기는 줄 수에 맞춰 자동 */
+function printBalanceSheet(rows, f) {
+  if (!rows.length) { toast("인쇄할 거래처가 없습니다.", "error"); return; }
+  const co = state.company || {};
+  const won = (n) => fmtMoney(n);
+  const n = rows.length;
+  const twoCol = n > 34;                      // 한 단 34줄 넘으면 두 단
+  const perCol = twoCol ? Math.ceil(n / 2) : n;
+  const availMm = twoCol ? 248 : 242;         // 제목·요약·여백 뺀 표 영역 높이 (A4 297 − 여백 24)
+  const rowMm = Math.min(7.2, availMm / (perCol + 1.6));   // 머리글 포함
+  const fontPx = Math.max(7, Math.min(twoCol ? 10 : 11.5, rowMm * 2.55));
+  const tel = (p) => (p.phone || p.mobile || "").replace(/\s+/g, "");
+  const tableOf = (part, startNo) =>
+    '<table><thead><tr><th class="c">#</th><th>거래처</th>' + (twoCol ? "" : "<th>연락처</th>") +
+    (twoCol ? "" : '<th class="n">기초이월</th>') + '<th class="n">매출</th><th class="n">입금</th><th class="n">미수잔액</th></tr></thead><tbody>' +
+    part.map((r, i) => "<tr><td class=\"c\">" + (startNo + i) + "</td><td>" + esc(r.p.name) + "</td>" +
+      (twoCol ? "" : "<td>" + esc(tel(r.p)) + "</td>" + '<td class="n">' + (r.opening ? won(r.opening) : "") + "</td>") +
+      '<td class="n">' + won(r.sales) + '</td><td class="n">' + won(r.paid) + '</td><td class="n b">' + won(r.bal) + "</td></tr>").join("") +
+    "</tbody></table>";
+  const left = rows.slice(0, perCol), right = rows.slice(perCol);
+  const tot = (k) => sum(rows, (r) => r[k]);
+  const root = document.getElementById("print-root");
+  root.innerHTML =
+    "<style>.bp{font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#000;font-size:" + fontPx.toFixed(1) + "px}" +
+    ".bp h1{font-size:15px;margin:0 0 2px;text-align:center}.bp .meta{display:flex;justify-content:space-between;font-size:10px;margin:0 0 5px;border-bottom:1.5px solid #000;padding-bottom:3px}" +
+    ".bp .cols{display:flex;gap:6mm;align-items:flex-start}.bp .cols>table{flex:1}" +
+    ".bp table{width:100%;border-collapse:collapse;table-layout:fixed}.bp th,.bp td{border:0.6px solid #555;padding:0 3px;height:" + rowMm.toFixed(2) + "mm;line-height:1.15;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}" +
+    ".bp th{background:#eee;font-weight:700;text-align:center}.bp td.n,.bp th.n{text-align:right}.bp td.c{text-align:center;color:#555}.bp td.b{font-weight:700}" +
+    ".bp th.c,.bp td.c{width:" + (twoCol ? 6 : 5) + "%}.bp th.n,.bp td.n{width:" + (twoCol ? 20 : 14) + "%}" +
+    ".bp .sum{margin-top:5px;border-top:1.5px solid #000;padding-top:4px;font-size:11px;display:flex;justify-content:space-between}" +
+    ".bp .foot{font-size:9px;color:#444;margin-top:4px}</style>" +
+    '<div class="bp"><h1>거래처 미수금 현황' + (balOnlyUnpaid ? "" : " (거래처별 잔금)") + "</h1>" +
+    '<div class="meta"><span>' + esc(co.name || "") + "</span><span>기간 " + esc(f.from || "처음") + " ~ " + esc(f.to || "오늘") + " · 기준일 " + today() + "</span></div>" +
+    (twoCol ? '<div class="cols">' + tableOf(left, 1) + (right.length ? tableOf(right, perCol + 1) : "") + "</div>" : tableOf(rows, 1)) +
+    '<div class="sum"><span>거래처 ' + n + "곳" + (balOnlyUnpaid ? " (미수 있는 곳만)" : "") + "</span><span>매출 " + won(tot("sales")) + " · 입금 " + won(tot("paid")) +
+    " · <b>미수 합계 " + won(tot("bal")) + "원</b></span></div>" +
+    '<div class="foot">미수잔액 = 기초이월 + 기간 매출&반품 − 기간 입금 (쇼핑몰 매출 제외). 내부 관리용.</div></div>';
+  let pageStyle = document.getElementById("print-page-style");
+  if (!pageStyle) { pageStyle = document.createElement("style"); pageStyle.id = "print-page-style"; document.head.appendChild(pageStyle); }
+  pageStyle.textContent = "@page { size: A4 portrait; margin: 12mm 12mm; }";
+  document.body.classList.add("printing");
+  const cleanup = () => { document.body.classList.remove("printing"); window.removeEventListener("afterprint", cleanup); };
+  window.addEventListener("afterprint", cleanup);
+  setTimeout(() => window.print(), 100);
 }
 
 function partnerBalanceHTML(rows, f) {
@@ -1259,7 +1313,7 @@ function openBalanceModal() {
   overlay.innerHTML = '<div class="modal-box" style="max-width:1100px;max-height:92vh;display:flex;flex-direction:column">' +
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap"><h3>거래처별 잔금</h3>' +
     '<span class="sub">' + esc(f.from || "처음") + " ~ " + esc(f.to || "오늘") + "</span>" +
-    '<span style="flex:1"></span><button class="btn" id="bal-xlsx">📤 엑셀</button><button class="btn" data-act="cancel">닫기</button></div>' +
+    '<span style="flex:1"></span><button class="btn" id="bal-print">🖨 인쇄</button><button class="btn" id="bal-xlsx">📤 엑셀</button><button class="btn" data-act="cancel">닫기</button></div>' +
     '<div style="overflow:auto">' + partnerBalanceHTML(rows, f) + "</div></div>";
   overlay.addEventListener("click", (e) => {
     const act = e.target.getAttribute && e.target.getAttribute("data-act");
@@ -1268,6 +1322,7 @@ function openBalanceModal() {
     if (a) { e.preventDefault(); openPartnerBookModal(a.getAttribute("data-book-partner")); }
   });
   overlay.querySelector("#bal-xlsx").addEventListener("click", () => exportBalanceXlsx(rows, f));
+  overlay.querySelector("#bal-print").addEventListener("click", () => printBalanceSheet(rows, f));
   document.body.appendChild(overlay);
 }
 
