@@ -297,6 +297,9 @@ table.grid td.actions { white-space: nowrap; text-align: right; }
 .badge.red { background: rgba(214, 69, 69, 0.12); color: var(--danger); }
 .badge.blue { background: var(--accent-soft); color: var(--accent); }
 .badge.gray { background: rgba(120, 130, 145, 0.14); color: var(--text-dim); }
+.badge.purple { background: rgba(112, 72, 232, 0.13); color: #6a3fd6; }
+table.grid.compact th, table.grid.compact td { padding: 6px 7px; font-size: 12.5px; white-space: nowrap; }
+table.grid td.hl, table.grid th.hl { background: var(--accent-soft); }
 
 /* 통계 타일 (아이콘 칩 포함) */
 .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }

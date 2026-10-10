@@ -31,6 +31,9 @@ function crc32(bytes) {
  * ============================================================ */
 function makeXlsx(rows, sheetName) {
   const enc = new TextEncoder();
+  // 다중 시트: makeXlsx([{ name, rows }, ...]) 형태도 받는다
+  const sheets = (Array.isArray(rows) && rows.length && rows[0] && !Array.isArray(rows[0]) && Array.isArray(rows[0].rows))
+    ? rows : [{ name: sheetName || "Sheet1", rows: rows }];
 
   /** XML 특수문자 이스케이프 */
   const xesc = (s) => String(s == null ? "" : s)
@@ -46,21 +49,24 @@ function makeXlsx(rows, sheetName) {
   };
 
   // 시트 XML — 문자열은 inlineStr로 기록해 sharedStrings 불필요
-  let sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
-  rows.forEach((row, ri) => {
-    sheetXml += '<row r="' + (ri + 1) + '">';
-    row.forEach((cell, ci) => {
-      const ref = colName(ci) + (ri + 1);
-      if (typeof cell === "number" && isFinite(cell)) {
-        sheetXml += '<c r="' + ref + '"><v>' + cell + "</v></c>";
-      } else if (cell != null && cell !== "") {
-        sheetXml += '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + xesc(cell) + "</t></is></c>";
-      }
+  const sheetXmlOf = (rows) => {
+    let sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+    (rows || []).forEach((row, ri) => {
+      sheetXml += '<row r="' + (ri + 1) + '">';
+      (row || []).forEach((cell, ci) => {
+        const ref = colName(ci) + (ri + 1);
+        if (typeof cell === "number" && isFinite(cell)) {
+          sheetXml += '<c r="' + ref + '"><v>' + cell + "</v></c>";
+        } else if (cell != null && cell !== "") {
+          sheetXml += '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + xesc(cell) + "</t></is></c>";
+        }
+      });
+      sheetXml += "</row>";
     });
-    sheetXml += "</row>";
-  });
-  sheetXml += "</sheetData></worksheet>";
+    return sheetXml + "</sheetData></worksheet>";
+  };
+  const safeName = (n, i) => String(n || "Sheet" + (i + 1)).replace(/[\\/?*\[\]:]/g, " ").slice(0, 31);
 
   const files = [
     ["[Content_Types].xml",
@@ -69,7 +75,7 @@ function makeXlsx(rows, sheetName) {
       '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
       '<Default Extension="xml" ContentType="application/xml"/>' +
       '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
-      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+      sheets.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join("") +
       "</Types>"],
     ["_rels/.rels",
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -80,14 +86,13 @@ function makeXlsx(rows, sheetName) {
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
       'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-      '<sheets><sheet name="' + xesc(sheetName || "Sheet1") + '" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      '<sheets>' + sheets.map((sh, i) => '<sheet name="' + xesc(safeName(sh.name, i)) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join("") + "</sheets></workbook>"],
     ["xl/_rels/workbook.xml.rels",
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
-      "</Relationships>"],
-    ["xl/worksheets/sheet1.xml", sheetXml]
-  ];
+            sheets.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join("") +
+      "</Relationships>"]
+  ].concat(sheets.map((sh, i) => ["xl/worksheets/sheet" + (i + 1) + ".xml", sheetXmlOf(sh.rows)]));
 
   // ---- ZIP 조립 (STORE, 무압축) ----
   const parts = [];        // 파일 데이터 청크
@@ -151,7 +156,7 @@ function downloadXlsx(filename, rows, sheetName) {
  * 읽기: parseXlsx(file) → Promise<string[][]>
  * 첫 번째 시트를 2차원 문자열/숫자 배열로 반환
  * ============================================================ */
-async function parseXlsx(file) {
+async function parseXlsx(file, sheetName) {
   if (typeof DecompressionStream === "undefined") {
     throw new Error("이 브라우저는 엑셀 파일 읽기를 지원하지 않습니다. Chrome/Edge를 사용하거나 CSV로 업로드하세요.");
   }
@@ -208,7 +213,9 @@ async function parseXlsx(file) {
     if (wb && rels) {
       const dp = new DOMParser();
       const wbDoc = dp.parseFromString(wb, "application/xml");
-      const firstSheet = wbDoc.getElementsByTagName("sheet")[0];
+      const allSheets = [...wbDoc.getElementsByTagName("sheet")];
+      // 시트 이름을 지정하면 그 시트(띄어쓰기 무시 부분 일치), 아니면 첫 시트
+      const firstSheet = (sheetName && allSheets.find((sh) => String(sh.getAttribute("name") || "").replace(/\s+/g, "").includes(String(sheetName).replace(/\s+/g, "")))) || allSheets[0];
       const rid = firstSheet && (firstSheet.getAttribute("r:id") || firstSheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"));
       if (rid) {
         const relDoc = dp.parseFromString(rels, "application/xml");
@@ -355,13 +362,13 @@ function normalizeDateCell(v) {
 }
 
 /** 업로드 파일(.xlsx 또는 .csv) → 2차원 배열 */
-async function parseSpreadsheetFile(file) {
+async function parseSpreadsheetFile(file, sheetName) {
   const name = (file.name || "").toLowerCase();
   if (name.endsWith(".csv")) {
     return parseCSVText(await file.text());
   }
   if (name.endsWith(".xlsx")) {
-    return await parseXlsx(file);
+    return await parseXlsx(file, sheetName);
   }
   if (name.endsWith(".xls")) {
     throw new Error("구형 .xls 형식은 지원하지 않습니다. 엑셀에서 [다른 이름으로 저장 → .xlsx]로 변환해 주세요.");

@@ -16,7 +16,7 @@ const MODULE_GROUPS = [
   ["업무 현황", ["dashboard"]],
   ["영업 관리", ["sales", "shipping", "documents", "payments"]],
   ["구매·재고", ["purchases", "inventory"]],
-  ["회계·장부", ["ledger", "reports", "expenses", "receipts"]],
+  ["회계·장부", ["ledger", "reports", "expenses", "tax", "receipts"]],
   ["기초 정보", ["partners"]],
   ["시스템", ["settings"]]
 ];
@@ -76,6 +76,11 @@ const MODULES = {
     name: "경비 관리", icon: "🧾", locked: false, requires: [],
     desc: "간단한 지출 기록부",
     render: (el) => renderExpenses(el)
+  },
+  tax: {
+    name: "세무·신고 자료", icon: "🧮", locked: false, requires: [],
+    desc: "세금계산서 발행대장, 임대(간주임대료), 부가세 기수별 요약, 기장의무 판정, 월별 비용 요약 — 임대·도매 겸영 개인사업자용",
+    render: (el) => renderTax(el)
   },
   receipts: {
     name: "증빙·세무사", icon: "📎", locked: false, requires: [],

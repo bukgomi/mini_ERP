@@ -107,14 +107,21 @@ function renderSettings(el) {
     "저장만 하면 자동으로 클라우드 백업·동기화됩니다.</p>" +
     "</div>" +
 
-    // ---- 경비 분류 관리 ----
-    '<div class="card"><h3>경비 분류</h3>' +
+    // ---- 경비 계정과목·결제수단 관리 ----
+    '<div class="card"><h3>경비 계정과목 <span class="sub">(세무사 전달 기준 — 경비 입력 드롭다운)</span></h3>' +
     '<div id="exp-cat-list" style="display:flex;gap:6px;flex-wrap:wrap">' +
     state.expenseCategories.map((cat, i) =>
       '<span class="badge blue">' + esc(cat) +
       ' <a href="#" data-delcat="' + i + '" style="color:inherit;text-decoration:none">✕</a></span>').join("") +
     "</div>" +
-    '<div style="margin-top:10px"><button class="btn btn-sm" id="btn-add-cat">+ 분류 추가</button></div></div>' +
+    '<div style="margin-top:10px"><button class="btn btn-sm" id="btn-add-cat">+ 계정과목 추가</button></div>' +
+    '<h3 style="margin-top:16px">결제수단 <span class="sub">(사업용카드·개인카드·계좌이체 등)</span></h3>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+    (state.expenseMethods || []).map((m, i) =>
+      '<span class="badge gray">' + esc(m) +
+      ' <a href="#" data-delmethod="' + i + '" style="color:inherit;text-decoration:none">✕</a></span>').join("") +
+    "</div>" +
+    '<div style="margin-top:10px"><button class="btn btn-sm" id="btn-add-method">+ 결제수단 추가</button></div></div>' +
 
     // ---- 예시 데이터 / 초기화 ----
     '<div class="card"><h3>기타</h3>' +
@@ -267,12 +274,29 @@ function renderSettings(el) {
   // 경비 분류 추가/삭제
   el.querySelector("#btn-add-cat").addEventListener("click", async () => {
     if (guardReadOnly()) return;
-    const name = await promptDialog("추가할 경비 분류 이름을 입력하세요.");
+    const name = await promptDialog("추가할 계정과목 이름을 입력하세요.");
     if (name && name.trim()) {
       if (state.expenseCategories.includes(name.trim())) { toast("이미 있는 분류입니다.", "error"); return; }
       state.expenseCategories.push(name.trim());
       markDirty(); renderApp();
     }
+  });
+  el.querySelector("#btn-add-method").addEventListener("click", async () => {
+    if (guardReadOnly()) return;
+    const name = await promptDialog("추가할 결제수단 이름 (예: 사업용카드3, 네이버페이)");
+    if (name && name.trim()) {
+      if (state.expenseMethods.includes(name.trim())) { toast("이미 있는 결제수단입니다.", "error"); return; }
+      state.expenseMethods.push(name.trim()); markDirty(); renderApp();
+    }
+  });
+  el.querySelectorAll("[data-delmethod]").forEach((a) => {
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      if (guardReadOnly()) return;
+      const i = Number(a.getAttribute("data-delmethod"));
+      const ok = await confirmDialog('결제수단 "' + state.expenseMethods[i] + '"을(를) 삭제할까요?\n(기존 경비 기록은 그대로 남습니다)');
+      if (ok) { state.expenseMethods.splice(i, 1); markDirty(); renderApp(); }
+    });
   });
   el.querySelectorAll("[data-delcat]").forEach((a) => {
     a.addEventListener("click", async (e) => {
@@ -445,8 +469,8 @@ function exportAllCSV() {
   ]);
   // 경비
   downloadCSV("경비.csv", [
-    ["날짜", "분류", "내용", "금액", "메모"],
-    ...state.expenses.map((e) => [e.date, e.category, e.desc, e.amount, e.memo])
+    ["날짜", "구분", "계정과목", "거래처", "내용", "공급가액", "부가세", "합계", "부가세공제", "비용금액", "결제수단", "증빙종류", "사용처", "사업비율", "메모"],
+    ...state.expenses.map((e) => [e.date, e.biz, e.category, e.partner, e.desc, e.supply, e.vat, e.total, e.vatDeductible ? "O" : "X", e.amount, e.method, e.evidence, e.usage, e.bizRatio, e.memo])
   ]);
   toast("CSV 파일 5개를 내려받았습니다.", "success");
 }
@@ -518,8 +542,8 @@ function insertDemoData() {
   const cats = state.expenseCategories;
   for (let m = 2; m >= 0; m--) {
     state.expenses.push(
-      { id: uid("e"), date: mkDate(m, 8), category: cats[0], desc: "직원 점심", amount: 48000, memo: "예시" },
-      { id: uid("e"), date: mkDate(m, 15), category: cats[2], desc: "사무용품 구입", amount: 33000, memo: "예시" }
+      { id: uid("e"), date: mkDate(m, 8), biz: "도매", category: "복리후생비", partner: "김밥천국", desc: "직원 점심", supply: 48000, vat: 0, total: 48000, vatDeductible: false, method: "사업용카드1", evidence: "카드전표", usage: "사무실", bizRatio: 1, amount: 48000, deductVat: 0, memo: "예시" },
+      { id: uid("e"), date: mkDate(m, 15), biz: "도매", category: "소모품비", partner: "다이소", desc: "사무용품 구입", supply: 30000, vat: 3000, total: 33000, vatDeductible: true, method: "사업용카드1", evidence: "카드전표", usage: "사무실", bizRatio: 1, amount: 30000, deductVat: 3000, memo: "예시" }
     );
   }
   // 현금출납부 수동 항목

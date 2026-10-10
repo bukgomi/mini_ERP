@@ -7,6 +7,45 @@
 /** 스키마 버전 — 구조가 바뀌면 올리고 migrate()에서 변환 */
 const SCHEMA_VERSION = 1;
 
+/* ---------- 경비·세무 공용 목록 ---------- */
+/** 계정과목 (세무사 전달용 표준 목록 — 설정에서 추가·삭제 가능) */
+const EXP_ACCOUNTS = ["상품매입(원가)", "이자비용", "세금과공과", "보험료", "감가상각비", "수선비", "차량유지비", "여비교통비",
+  "운반비", "포장비", "기업업무추진비(접대비)", "복리후생비", "통신비", "수도광열비", "소모품비", "지급수수료", "광고선전비",
+  "임차료", "급여", "도서인쇄비", "교육훈련비", "잡비"];
+const EXP_METHODS_DEFAULT = ["사업용카드1", "사업용카드2", "개인카드(본인)", "배우자카드", "계좌이체", "자동이체", "현금"];
+const EXP_BIZ = ["임대", "도매", "공통"];          // 구분 (어느 사업의 비용인지)
+const EXP_USAGE = ["사무실", "집", "공용"];        // 사용처 (집 = 비용 제외, 공용 = 사업비율만큼)
+const EXP_EVIDENCE = ["세금계산서", "계산서", "카드전표", "현금영수증(지출증빙)", "고지서·납부증명서", "이자내역서", "청첩장·부고", "간이영수증", "증빙없음"];
+const TAX_INV_KINDS = ["세금계산서", "계산서(면세)", "카드매출", "현금영수증", "기타(현금 등)"]; // 발행구분
+const TAX_INV_BIZ = ["임대", "도매"];
+const RENT_ITEMS = ["임대료", "관리비", "간판사용료", "주차료", "기타"];
+
+/**
+ * 경비 한 건의 장부 반영 금액 계산 (엑셀 비용입력 시트 규칙 그대로)
+ *  - 비용금액 = (부가세공제면 공급가액, 아니면 합계) × (사무실 1 / 공용 사업비율 / 집 0)
+ *  - 인정 공제부가세 = 공제면 부가세 × 같은 비율
+ *  - 개인분 = 합계 − 비용금액 − 공제부가세
+ *  - check: 입력 점검 메시지 ("" 이면 정상)
+ */
+function expenseCalc(e) {
+  const supply = Number(e.supply) || 0, vat = Number(e.vat) || 0;
+  const total = (e.total != null && e.total !== "") ? Number(e.total) || 0 : supply + vat;
+  const ratio = e.usage === "사무실" ? 1 : e.usage === "공용" ? (Number(e.bizRatio) || 0) : 0;
+  const ded = !!e.vatDeductible;
+  const amount = Math.round((ded ? supply : total) * ratio);
+  const deductVat = ded ? Math.round(vat * ratio) : 0;
+  const personal = total - amount - deductVat;
+  let check = "";
+  if (!e.usage) check = "사용처(사무실/집/공용) 선택";
+  else if (e.usage !== "집") {
+    if (e.usage === "공용" && !(Number(e.bizRatio) > 0)) check = "공용이면 사업비율 입력";
+    else if (total > 30000 && (e.evidence === "간이영수증" || e.evidence === "증빙없음")) check = "3만원 초과: 적격증빙 필요";
+    else if (e.method === "배우자카드" && ded) check = "배우자카드 부가세공제 확인";
+    else if (!e.biz || !e.category) check = "구분·계정 입력 필요";
+  }
+  return { supply, vat, total, ratio, amount, deductVat, personal, check };
+}
+
 /** 기본(빈) 상태 생성 */
 function defaultState() {
   return {
@@ -17,7 +56,7 @@ function defaultState() {
     modules: {
       sales: true, purchases: true, inventory: true, shipping: false,
       documents: true, payments: true, reports: true, expenses: false,
-      receipts: false, ledger: true
+      receipts: false, ledger: true, tax: false
     },
     partners: [],      // 거래처
     items: [],         // 품목
@@ -30,7 +69,17 @@ function defaultState() {
     documents: [],     // 발행 문서 (견적서/거래명세서)
     cashOpening: 0,    // 현금출납부 기초 시재
     cashEntries: [],   // 수동 입출금
-    expenseCategories: ["식대", "교통", "소모품", "임차료", "기타"], // 경비 분류 (설정에서 추가 가능)
+    expenseCategories: EXP_ACCOUNTS.slice(), // 경비 계정과목 (세무 계정 기준, 설정에서 추가 가능)
+    expenseMethods: EXP_METHODS_DEFAULT.slice(), // 결제수단 목록 (경비 입력 드롭다운)
+    taxInvoices: [],   // 세금계산서 발행대장 { id, date, biz(임대/도매), kind(발행구분), partner, bizNumber, item, supply, vat, total, approvalNo, memo }
+    tenants: [],       // 임대 관리 — 임차인 { id, name, rent(월 임대료), deposit, start, end, status, memo }
+    // 세무 기준값 (세무·신고 모듈)
+    tax: {
+      rentalRate: 0.031,        // 간주임대료 이자율 (국세청 고시, 매년 바뀜)
+      threshold: 300000000,     // 복식부기 기준금액 (도매업 3억)
+      multiplier: 4,            // 임대 환산배수 (3억 ÷ 부동산임대 7,500만)
+      history: []               // 연도별 실적 [{ year, rental, wholesale }] — 기장의무 흐름표
+    },
     fiscalYear: new Date().getFullYear(),
     seq: { quote: 1, statement: 1 },
     closedYears: [],   // 마감된 연도 목록 [{ year, closedAt, archiveFile }]
@@ -74,8 +123,23 @@ function migrateState(raw) {
   s.company = Object.assign(defaultState().company, s.company || {});
   s.modules = Object.assign(defaultState().modules, s.modules || {});
   ["partners", "items", "sales", "purchases", "shipments", "adjustments",
-   "expenses", "receipts", "documents", "cashEntries", "closedYears"].forEach((k) => {
+   "expenses", "receipts", "documents", "cashEntries", "closedYears", "taxInvoices", "tenants"].forEach((k) => {
     if (!Array.isArray(s[k])) s[k] = [];
+  });
+  s.tax = Object.assign(defaultState().tax, s.tax || {});
+  if (!Array.isArray(s.tax.history)) s.tax.history = [];
+  if (!Array.isArray(s.expenseMethods) || !s.expenseMethods.length) s.expenseMethods = EXP_METHODS_DEFAULT.slice();
+  // 경비 구버전 레코드(날짜·분류·내용·금액만) → 확장 필드 보정 (전부 사업용·사무실 사용으로 간주)
+  s.expenses.forEach((e) => {
+    if (e.total == null) { e.total = Number(e.amount) || 0; e.supply = e.total; e.vat = 0; }
+    if (!e.usage) e.usage = "사무실";
+    if (!e.biz) e.biz = "도매";
+    if (e.bizRatio == null) e.bizRatio = 1;
+    if (e.vatDeductible == null) e.vatDeductible = false;
+    if (e.deductVat == null) e.deductVat = 0;
+    if (e.partner == null) e.partner = "";
+    if (e.method == null) e.method = "";
+    if (e.evidence == null) e.evidence = "";
   });
   // 거래처별 이월 충당 기록 (일괄 수금에서 기초 이월분을 갚은 이력) — 구버전 파일 보정
   s.partners.forEach((p) => { if (!Array.isArray(p.openingPayments)) p.openingPayments = []; });

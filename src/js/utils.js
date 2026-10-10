@@ -158,7 +158,7 @@ function confirmDialog(message, opts) {
     overlay.className = "modal-overlay";
     overlay.innerHTML =
       '<div class="modal-box">' +
-      '<div class="modal-msg">' + esc(message).replace(/\n/g, "<br>") + "</div>" +
+      '<div class="modal-msg">' + (opts.html ? message : esc(message).replace(/\n/g, "<br>")) + "</div>" +
       '<div class="modal-btns">' +
       '<button class="btn" data-act="cancel">취소</button>' +
       '<button class="btn ' + (opts.danger ? "btn-danger" : "btn-primary") + '" data-act="ok">' + esc(opts.okText || "확인") + "</button>" +
