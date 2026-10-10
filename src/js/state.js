@@ -101,7 +101,9 @@ function defaultState() {
       defVatExempt: false,     // 매출·매입 입력 기본: 부가세 미적용 (면세사업자용)
       defVatIncl: false,       // 매출·매입 입력 기본: 단가에 부가세 포함 (부가세 포함가로 거래하는 도매용)
       aging1: 30, aging2: 60, aging3: 90, // 미수금 연령 구간(일)
-      saleToStmt: false        // 매출 저장 후 거래명세서 바로 발행
+      saleToStmt: false,       // 매출 저장 후 거래명세서 바로 발행
+      todoSheetUrl: "",        // 할 일 구글 시트 주소 (폰에서 적은 할 일을 켤 때 가져옴)
+      todoSheetTab: "할일"      // 그 시트 안의 탭 이름
     }
   };
 }

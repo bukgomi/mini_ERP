@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld("erpNative", {
   readFileBinary: (base, rel) => ipcRenderer.invoke("erp:readFileBinary", base, rel),
   writeFile: (base, rel, content) => ipcRenderer.invoke("erp:writeFile", base, rel, content),
   listFiles: (base, rel) => ipcRenderer.invoke("erp:listFiles", base, rel),
-  deleteFile: (base, rel) => ipcRenderer.invoke("erp:deleteFile", base, rel)
+  deleteFile: (base, rel) => ipcRenderer.invoke("erp:deleteFile", base, rel),
+  fetchText: (url) => ipcRenderer.invoke("erp:fetchText", url)
 });

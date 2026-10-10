@@ -71,6 +71,9 @@ function renderSettings(el) {
     '<div class="form-field"><label>연령 구간 2 (일)</label><input type="text" class="num" id="pf-a2" value="' + state.prefs.aging2 + '"></div>' +
     '<div class="form-field"><label>연령 구간 3 (일)</label><input type="text" class="num" id="pf-a3" value="' + state.prefs.aging3 + '"></div>' +
     '<div class="form-field span2"><label>견적서 하단 문구 (비우면 표시 안 함)</label><input type="text" id="pf-qfooter" value="' + esc(state.prefs.quoteFooter) + '"></div>' +
+    '<div class="form-field span2"><label>할 일 구글 시트 주소 <span class="sub">(폰에서 적은 할 일을 ERP 켤 때 자동으로 가져옴 — 시트는 "링크가 있는 모든 사용자 보기 가능"이어야 함)</span></label>' +
+    '<input type="text" id="pf-todourl" value="' + esc(state.prefs.todoSheetUrl || "") + '" placeholder="https://docs.google.com/spreadsheets/d/..../edit"></div>' +
+    '<div class="form-field"><label>할 일 탭 이름 <span class="sub">(1행: 날짜 | 내용 | 거래처 | 완료)</span></label><input type="text" id="pf-todotab" value="' + esc(state.prefs.todoSheetTab || "할일") + '"></div>' +
     "</div>" +
     '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:12px">' +
     '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pf-two"' + (state.prefs.defTwoCopies ? " checked" : "") + ' style="width:auto"> 명세서 기본 2부 인쇄</label>' +
@@ -242,7 +245,9 @@ function renderSettings(el) {
       defAutoSale: el.querySelector("#pf-autosale").checked,
       saleToStmt: el.querySelector("#pf-tostmt").checked,
       defVatExempt: el.querySelector("#pf-vatx").checked,
-      defVatIncl: el.querySelector("#pf-vatincl").checked
+      defVatIncl: el.querySelector("#pf-vatincl").checked,
+      todoSheetUrl: el.querySelector("#pf-todourl").value.trim(),
+      todoSheetTab: el.querySelector("#pf-todotab").value.trim() || "할일"
     };
     // 연령 구간은 오름차순이어야 함
     if (!(state.prefs.aging1 < state.prefs.aging2 && state.prefs.aging2 < state.prefs.aging3)) {

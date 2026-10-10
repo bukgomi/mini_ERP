@@ -94,6 +94,16 @@ ipcMain.handle("erp:listFiles", async (e, base, relDir) => {
   } catch { return []; }
 });
 
+// 구글 시트(공개 링크) CSV 등 외부 텍스트 가져오기 — docs.google.com 만 허용
+ipcMain.handle("erp:fetchText", async (e, url) => {
+  const u = new URL(String(url));
+  if (!/(^|\.)docs\.google\.com$/.test(u.hostname) && !/(^|\.)googleusercontent\.com$/.test(u.hostname)) throw new Error("허용되지 않은 주소입니다: " + u.hostname);
+  const { net } = require("electron");
+  const res = await net.fetch(u.toString(), { redirect: "follow" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return await res.text();
+});
+
 ipcMain.handle("erp:deleteFile", async (e, base, relPath) => {
   try { await fs.unlink(safePath(base, relPath)); return true; }
   catch { return false; }
