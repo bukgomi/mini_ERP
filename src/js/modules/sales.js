@@ -453,7 +453,7 @@ function tradeForm(kind, id) {
       '<div class="card" style="margin:12px 0 0;padding:8px 12px;background:var(--bg);display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">' +
       '<div class="form-field" style="margin:0;width:90px"><label>할인율</label><div style="display:flex;align-items:center;gap:3px"><input type="text" class="num" id="trf-discpct" value="" placeholder="예: 10" style="width:64px">%</div></div>' +
       '<div class="form-field" style="margin:0;width:140px"><label>할인 금액 <span class="sub">(합계에서 뺌)</span></label><input type="text" class="num" id="trf-disc" value="" placeholder="0"></div>' +
-      '<div class="form-field" style="margin:0;width:160px"><label>이번에 받은 입금 <span class="sub">(이 매출에 바로 수금)</span></label><input type="text" class="num" id="trf-payamt" value="" placeholder="0"></div>' +
+      '<div class="form-field" style="margin:0;width:160px"><label>이번에 받은 입금 <span class="sub">(이 건 → 남으면 이전 미수 순)</span></label><input type="text" class="num" id="trf-payamt" value="" placeholder="0"></div>' +
       '<div class="form-field" style="margin:0;width:140px"><label>입금은행</label><select id="trf-paybank">' + BOOK_BANKS.filter((b) => b !== "할인").map((b) => '<option value="' + b + '"' + (b === (state.prefs.defPayBank || "") ? " selected" : "") + ">" + (b || "(은행)") + "</option>").join("") + "</select></div>" +
       '<span class="sub" id="trf-paynote">비우면 외상(미수). 할인은 "할인" 품목 줄로 들어가 명세서에도 찍힙니다</span></div>' : "") +
 
@@ -536,7 +536,7 @@ function tradeForm(kind, id) {
     const prev = saleBookPrev(pid, date, rec && rec.date === date ? rec.id : null);
     const cur = calcAmounts(lines).total - currentDisc();
     const payEl = overlay.querySelector("#trf-payamt");
-    const paid = payEl ? Math.min(parseMoney(payEl.value), Math.max(cur, 0)) : 0;
+    const paid = payEl ? Math.min(parseMoney(payEl.value), Math.max(prev + cur, 0)) : 0; // 이 건을 넘는 입금은 이전 미수에서 차감
     box.style.display = "";
     box.innerHTML = "<b>" + esc(getPartner(pid).name) + "</b> · 전잔금 <b>" + fmtMoney(prev) + "</b>원 + 이번 거래 <b>" + fmtMoney(cur) + "</b>원" +
       (paid ? " − 입금 <b>" + fmtMoney(paid) + "</b>원" : "") + " = 총미수 " +
@@ -732,7 +732,7 @@ function tradeForm(kind, id) {
       const prev = saleBookPrev(pid, date, rec && rec.date === date ? rec.id : null);
       const dayTotal = calcAmounts(pl).total;
       const payEl = overlay.querySelector("#trf-payamt");
-      const paid = payEl ? Math.min(parseMoney(payEl.value), Math.max(dayTotal, 0)) : 0;
+      const paid = payEl ? Math.min(parseMoney(payEl.value), Math.max(prev + dayTotal, 0)) : 0;
       const temp = { type: "statement", no: "(미발행)", date, partnerId: pid, lines: pl, discountRate: 0, showVat: false, memo: overlay.querySelector("#trf-memo").value.trim(),
         twoCopies: state.prefs.defTwoCopies !== false, settle: { prevBalance: prev, dayTotal, sum: prev + dayTotal, paid, balance: prev + dayTotal - paid } };
       const pv = document.createElement("div");
@@ -793,13 +793,20 @@ function tradeForm(kind, id) {
       if (payAmt > 0) {
         const bank = overlay.querySelector("#trf-paybank").value;
         const method = bankToMethod(bank);
+        const pmemo = ["입금", bankTagOf(bank, method)].filter(Boolean).join(" / ");
         const un = unpaidAmount(savedRec);
-        const amt = Math.min(payAmt, Math.max(un, 0));
+        const amt = Math.min(payAmt, Math.max(un, 0));   // ① 이 매출 건에 먼저
         if (amt > 0) {
           savedRec.payments = savedRec.payments || [];
-          savedRec.payments.push({ date: data.date, amount: amt, method, memo: ["입금", bankTagOf(bank, method)].filter(Boolean).join(" / ") });
+          savedRec.payments.push({ date: data.date, amount: amt, method, memo: pmemo });
         }
-        if (payAmt > amt) toast("입금액이 이 매출의 미수(" + fmtMoney(un) + ")보다 커서 " + fmtMoney(amt) + "원만 기록했습니다. 나머지는 [수금]에서 다른 건에 배분하세요.", "error");
+        let rest = payAmt - amt;
+        if (rest > 0) {                                     // ② 남는 돈은 이 거래처의 이전 미수에 오래된 순으로
+          const bal = partnerBalance(partnerId, "sales");
+          const take = Math.min(rest, Math.max(bal, 0));
+          if (take > 0) { applyBulkPayment("sales", partnerId, take, data.date, method, pmemo); rest -= take; }
+          if (rest > 0) toast("입금 " + fmtMoney(payAmt) + "원 중 " + fmtMoney(payAmt - rest) + "원만 배분했습니다 (미수 잔액 초과분 " + fmtMoney(rest) + "원은 기록 안 됨).", "error");
+        }
         if (bank) state.prefs.defPayBank = bank;
       }
       // 매출 저장 후 거래명세서 바로 발행 옵션 (명세서 폼이 이 매출로 채워져 열림)
