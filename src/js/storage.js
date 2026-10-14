@@ -175,7 +175,8 @@ const electronAdapter = {
     await window.erpNative.writeFile(this.base, relPath, content);
   },
   async listFiles(relDir) { return await window.erpNative.listFiles(this.base, relDir); },
-  async deleteFile(relPath) { return await window.erpNative.deleteFile(this.base, relPath); }
+  async deleteFile(relPath) { return await window.erpNative.deleteFile(this.base, relPath); },
+  async openFile(relPath) { if (window.erpNative.openPath) { const r = await window.erpNative.openPath(this.base, relPath); if (r) throw new Error(r); return true; } return false; }
 };
 
 /* ---------- 폴백 어댑터 (Firefox 등 FSA 미지원) ---------- */

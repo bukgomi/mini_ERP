@@ -158,7 +158,7 @@ function bindTradeRows(el, kind) {
   el.querySelectorAll("[data-t-ship]").forEach((b) => b.addEventListener("click", () => createShipmentFromSale(b.getAttribute("data-t-ship"))));
   el.querySelectorAll("[data-ship-open]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); shipmentForm(b.getAttribute("data-ship-open"), null); }));
   el.querySelectorAll("[data-t-doc]").forEach((b) => b.addEventListener("click", () => openStatementForSale(b.getAttribute("data-t-doc"))));
-  el.querySelectorAll("[data-t-order]").forEach((b) => b.addEventListener("click", () => printPurchaseOrder(b.getAttribute("data-t-order"))));
+  el.querySelectorAll("[data-t-order]").forEach((b) => b.addEventListener("click", () => orderPreview(b.getAttribute("data-t-order"))));
   el.querySelectorAll("[data-t-recv]").forEach((b) => b.addEventListener("click", () => receiveForm(b.getAttribute("data-t-recv"))));
   el.querySelectorAll("[data-t-tax]").forEach((b) => b.addEventListener("click", () => issueTaxInvoiceFromSale(b.getAttribute("data-t-tax"))));
   el.querySelectorAll("[data-ti-open]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); taxInvoiceForm(b.getAttribute("data-ti-open")); }));
@@ -461,7 +461,9 @@ function tradeForm(kind, id) {
       '<div class="form-field" style="margin:0;width:160px"><label>납기일</label><input type="date" id="trf-due" value="' + esc(rec ? rec.dueDate || "" : "") + '"></div>' +
       '<div class="form-field trf-fx-only" style="margin:0;width:100px"><label>통화</label><select id="trf-cur">' + ["CNY", "USD", "JPY"].map((v) => "<option" + ((rec && rec.currency !== "KRW" ? rec.currency : "CNY") === v ? " selected" : "") + ">" + v + "</option>").join("") + "</select></div>" +
       '<div class="form-field trf-fx-only" style="margin:0;width:120px"><label>환율 <span class="sub">(원/1단위)</span></label><input type="text" class="num" id="trf-fx" value="' + (rec && rec.fxRate ? fmtMoney(rec.fxRate) : "") + '" placeholder="예: 195"></div>' +
-      '<span class="sub trf-fx-only">외화 단가 × 환율 = 원화 단가(자동). 통관 후 실제 원화는 수정으로 맞추세요</span></div>' : "") +
+      '<span class="sub trf-fx-only">외화 단가 × 환율 = 원화 단가(자동). 통관 후 실제 원화는 수정으로 맞추세요</span></div>' +
+      '<div class="form-field" style="margin:10px 0 0"><label>주문서 상세 설명 <span class="sub">(색상표·소재·포장·납기 조건 등 — 주문서 품목표 아래에 그대로 인쇄, 줄바꿈 가능)</span></label>' +
+      '<textarea id="trf-onote" rows="3" placeholder="예: 1-Midnight blue, 2-Emerald green … / 소박스 200EA, 대박스 600EA / 1차 4/30, 2차 6/30">' + esc(rec ? rec.orderNote || "" : "") + "</textarea></div>" : "") +
 
     '<div style="margin-top:12px"><table class="grid" id="trf-lines"><thead><tr>' +
     "<th>품목</th><th>규격</th><th>수량</th>" + (kind === "purchases" ? '<th class="trf-fx-only">단가(외화)</th>' : "") + "<th>단가" + (kind === "purchases" ? "(원)" : "") + "</th><th class=\"num\">금액</th><th>기타</th><th></th></tr></thead>" +
@@ -841,7 +843,7 @@ function tradeForm(kind, id) {
         const imp = overlay.querySelector("#trf-otype").value === "수입";
         Object.assign(data, {
           orderType: imp ? "수입" : "국내", orderNo: overlay.querySelector("#trf-ono").value.trim(), dueDate: overlay.querySelector("#trf-due").value || "",
-          currency: imp ? overlay.querySelector("#trf-cur").value : "KRW",
+          currency: imp ? overlay.querySelector("#trf-cur").value : "KRW", orderNote: overlay.querySelector("#trf-onote").value.trim(),
           fxRate: imp ? (parseFloat(String(overlay.querySelector("#trf-fx").value).replace(/[^0-9.]/g, "")) || 0) : 0
         });
         if (!rec && data.orderNo === nextOrderNo()) state.seq.order++;

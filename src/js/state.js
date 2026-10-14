@@ -141,6 +141,8 @@ function migrateState(raw) {
     if (!p.currency) p.currency = "KRW";
     if (p.fxRate == null) p.fxRate = 0;
     if (!Array.isArray(p.receipts)) p.receipts = [];
+    if (!Array.isArray(p.attachments)) p.attachments = [];
+    if (p.orderNote == null) p.orderNote = "";
   });
   if (!s.seq.order) s.seq.order = 1;
   // 경비 구버전 레코드(날짜·분류·내용·금액만) → 확장 필드 보정 (전부 사업용·사무실 사용으로 간주)

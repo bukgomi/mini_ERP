@@ -104,6 +104,13 @@ ipcMain.handle("erp:fetchText", async (e, url) => {
   return await res.text();
 });
 
+// 데이터 폴더 안 파일을 기본 프로그램으로 열기 (엑셀·PDF 등 첨부 주문서)
+ipcMain.handle("erp:openPath", async (e, base, relPath) => {
+  const { shell } = require("electron");
+  const r = await shell.openPath(safePath(base, relPath));
+  return r === "" ? "" : r;
+});
+
 ipcMain.handle("erp:deleteFile", async (e, base, relPath) => {
   try { await fs.unlink(safePath(base, relPath)); return true; }
   catch { return false; }

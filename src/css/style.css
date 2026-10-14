@@ -476,6 +476,7 @@ details.month-group[open] summary { border-radius: 10px 10px 0 0; }
   body { background: #fff; color: #000; }
   /* 인쇄 대상(#print-root)만 보이게 */
   body.printing #content > * { display: none; }
+  body.printing .modal-overlay { display: none !important; } /* 미리보기 창이 열린 채 인쇄해도 종이엔 안 나오게 */
   body.printing #print-root { display: block !important; }
 }
 
