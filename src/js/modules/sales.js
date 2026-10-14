@@ -406,9 +406,25 @@ function tradeForm(kind, id) {
     ).join("");
   }
 
+  function currentDisc() {
+    const el = overlay.querySelector("#trf-disc");
+    return el ? parseMoney(el.value) : 0;
+  }
   function totalsHTML() {
+    applyDiscPct(); // 할인율이 있으면 줄 금액이 바뀔 때마다 할인 금액 재계산
     const a = calcAmounts(lines);
-    return "공급가액 <b>" + fmtMoney(a.supply) + "</b>원 · 부가세 <b>" + fmtMoney(a.vat) + "</b>원 · 합계 <b style=\"font-size:16px\">" + fmtMoney(a.total) + "</b>원";
+    const disc = currentDisc();
+    return "공급가액 <b>" + fmtMoney(a.supply) + "</b>원 · 부가세 <b>" + fmtMoney(a.vat) + "</b>원 · 합계 <b style=\"font-size:16px\">" + fmtMoney(a.total) + "</b>원" +
+      (disc > 0 ? ' <span style="color:var(--danger)">− 할인 ' + fmtMoney(disc) + "</span> = 청구 <b style=\"font-size:16px;color:var(--accent)\">" + fmtMoney(a.total - disc) + "</b>원" : "");
+  }
+  /** 할인율(%) → 할인 금액 (합계 기준, 원단위 반올림) */
+  function applyDiscPct() {
+    const pctEl = overlay.querySelector("#trf-discpct");
+    if (!pctEl) return;
+    const pct = parseFloat(String(pctEl.value).replace(/[^0-9.]/g, ""));
+    if (!(pct > 0)) return;
+    const total = calcAmounts(lines).total;
+    overlay.querySelector("#trf-disc").value = fmtMoney(Math.round(total * pct / 100));
   }
 
   overlay.innerHTML =
@@ -435,7 +451,8 @@ function tradeForm(kind, id) {
     // 매출: 할인·입금을 같이 적으면 저장 때 바로 처리 (현금 거래·방문 수령 등)
     (kind === "sales" ?
       '<div class="card" style="margin:12px 0 0;padding:8px 12px;background:var(--bg);display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">' +
-      '<div class="form-field" style="margin:0;width:150px"><label>할인 <span class="sub">(합계에서 뺌)</span></label><input type="text" class="num" id="trf-disc" value="" placeholder="0"></div>' +
+      '<div class="form-field" style="margin:0;width:90px"><label>할인율</label><div style="display:flex;align-items:center;gap:3px"><input type="text" class="num" id="trf-discpct" value="" placeholder="예: 10" style="width:64px">%</div></div>' +
+      '<div class="form-field" style="margin:0;width:140px"><label>할인 금액 <span class="sub">(합계에서 뺌)</span></label><input type="text" class="num" id="trf-disc" value="" placeholder="0"></div>' +
       '<div class="form-field" style="margin:0;width:160px"><label>이번에 받은 입금 <span class="sub">(이 매출에 바로 수금)</span></label><input type="text" class="num" id="trf-payamt" value="" placeholder="0"></div>' +
       '<div class="form-field" style="margin:0;width:140px"><label>입금은행</label><select id="trf-paybank">' + BOOK_BANKS.filter((b) => b !== "할인").map((b) => '<option value="' + b + '"' + (b === (state.prefs.defPayBank || "") ? " selected" : "") + ">" + (b || "(은행)") + "</option>").join("") + "</select></div>" +
       '<span class="sub" id="trf-paynote">비우면 외상(미수). 할인은 "할인" 품목 줄로 들어가 명세서에도 찍힙니다</span></div>' : "") +
@@ -663,6 +680,13 @@ function tradeForm(kind, id) {
   bindLineEvents();
 
   if (kind === "sales" && isModuleOn("shipping")) bindSaleShipSection(overlay, lines);
+  // 할인율/할인 금액 입력 → 합계 줄 갱신
+  const discPct = overlay.querySelector("#trf-discpct"), discAmt = overlay.querySelector("#trf-disc");
+  if (discPct) {
+    discPct.addEventListener("input", () => { if (!String(discPct.value).trim()) discAmt.value = ""; applyDiscPct(); overlay.querySelector("#trf-totals").innerHTML = totalsHTML(); });
+    discAmt.addEventListener("input", () => { discPct.value = ""; overlay.querySelector("#trf-totals").innerHTML = totalsHTML(); });
+    discAmt.addEventListener("blur", () => { discAmt.value = discAmt.value.trim() ? fmtMoney(parseMoney(discAmt.value)) : ""; });
+  }
   overlay.querySelector("#trf-addline").addEventListener("click", () => {
     lines.push({ itemId: "", name: "", qty: 1, unitPrice: 0 });
     refreshLines();
