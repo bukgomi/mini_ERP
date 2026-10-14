@@ -117,9 +117,10 @@ function itemHistoryHTML(item) {
   state.purchases.forEach((p) => {
     (p.lines || []).forEach((ln) => {
       if (ln.itemId === item.id) rows.push({
-        date: p.date, kind: "입고(매입)", qty: +ln.qty,
-        applied: p.status === "입고완료", // 입고완료만 재고 반영
-        desc: partnerName(p.partnerId) + (p.status !== "입고완료" ? " [발주 상태 — 재고 미반영]" : "")
+        date: p.date, kind: "입고(매입)", qty: purchaseLineReceived(p, ln) || +ln.qty,
+        applied: purchaseLineReceived(p, ln) > 0, // 입고된 수량만 재고 반영
+        desc: partnerName(p.partnerId) + (p.orderNo ? " " + p.orderNo : "") +
+          (p.status === "발주" ? " [발주 상태 — 재고 미반영]" : p.status === "부분입고" ? " [부분입고 " + purchaseLineReceived(p, ln) + "/" + ln.qty + "]" : "")
       });
     });
   });

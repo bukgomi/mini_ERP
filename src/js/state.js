@@ -133,6 +133,16 @@ function migrateState(raw) {
   s.tax = Object.assign(defaultState().tax, s.tax || {});
   if (!Array.isArray(s.tax.history)) s.tax.history = [];
   if (!Array.isArray(s.expenseMethods) || !s.expenseMethods.length) s.expenseMethods = EXP_METHODS_DEFAULT.slice();
+  // 매입 주문서: 구분(국내/수입)·발주번호·납기·통화·환율 기본값
+  (s.purchases || []).forEach((p) => {
+    if (!p.orderType) p.orderType = "국내";
+    if (p.orderNo == null) p.orderNo = "";
+    if (p.dueDate == null) p.dueDate = "";
+    if (!p.currency) p.currency = "KRW";
+    if (p.fxRate == null) p.fxRate = 0;
+    if (!Array.isArray(p.receipts)) p.receipts = [];
+  });
+  if (!s.seq.order) s.seq.order = 1;
   // 경비 구버전 레코드(날짜·분류·내용·금액만) → 확장 필드 보정 (전부 사업용·사무실 사용으로 간주)
   s.expenses.forEach((e) => {
     if (e.total == null) { e.total = Number(e.amount) || 0; e.supply = e.total; e.vat = 0; }
@@ -202,15 +212,20 @@ function isSaleStockDeducted(sale) {
 }
 
 /** 품목별 현재고 계산 */
+/** 매입 줄의 "재고에 들어간" 수량: 입고완료 = 주문 수량 전부, 부분입고 = 입고 처리한 수량, 발주 = 0 */
+function purchaseLineReceived(p, ln) {
+  if (p.status === "입고완료") return Number(ln.qty) || 0;
+  if (p.status === "부분입고") return Number(ln.recvQty) || 0;
+  return 0;
+}
+
 function currentStock(itemId) {
   const item = getItem(itemId);
   if (!item) return 0;
   let stock = Number(item.baseStock) || 0;
-  // 입고완료된 매입 수량 합
+  // 입고된 매입 수량 합 (입고완료 = 전량, 부분입고 = 줄별 입고 수량)
   state.purchases.forEach((p) => {
-    if (p.status === "입고완료") {
-      (p.lines || []).forEach((ln) => { if (ln.itemId === itemId) stock += Number(ln.qty) || 0; });
-    }
+    (p.lines || []).forEach((ln) => { if (ln.itemId === itemId) stock += purchaseLineReceived(p, ln); });
   });
   // 출고 확정된 매출 수량 차감
   state.sales.forEach((s) => {
@@ -319,9 +334,7 @@ function currentStockAsOf(itemId, cutoff) {
   if (!item) return 0;
   let stock = Number(item.baseStock) || 0;
   state.purchases.forEach((p) => {
-    if (p.status === "입고완료" && p.date <= cutoff) {
-      (p.lines || []).forEach((ln) => { if (ln.itemId === itemId) stock += Number(ln.qty) || 0; });
-    }
+    if (p.date <= cutoff) (p.lines || []).forEach((ln) => { if (ln.itemId === itemId) stock += purchaseLineReceived(p, ln); });
   });
   state.sales.forEach((s) => {
     if (isSaleStockDeducted(s) && s.date <= cutoff) {

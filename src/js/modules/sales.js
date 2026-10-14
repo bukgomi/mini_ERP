@@ -19,7 +19,7 @@ const TRADE_CFG = {
   purchases: {
     label: "매입", listKey: "purchases", payLabel: "지급", unpaidLabel: "미지급금",
     partnerTypes: ["매입처", "둘다"], priceField: "costPrice",
-    statuses: ["발주", "입고완료"]
+    statuses: ["발주", "부분입고", "입고완료"]
   }
 };
 
@@ -158,6 +158,8 @@ function bindTradeRows(el, kind) {
   el.querySelectorAll("[data-t-ship]").forEach((b) => b.addEventListener("click", () => createShipmentFromSale(b.getAttribute("data-t-ship"))));
   el.querySelectorAll("[data-ship-open]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); shipmentForm(b.getAttribute("data-ship-open"), null); }));
   el.querySelectorAll("[data-t-doc]").forEach((b) => b.addEventListener("click", () => openStatementForSale(b.getAttribute("data-t-doc"))));
+  el.querySelectorAll("[data-t-order]").forEach((b) => b.addEventListener("click", () => printPurchaseOrder(b.getAttribute("data-t-order"))));
+  el.querySelectorAll("[data-t-recv]").forEach((b) => b.addEventListener("click", () => receiveForm(b.getAttribute("data-t-recv"))));
   el.querySelectorAll("[data-t-tax]").forEach((b) => b.addEventListener("click", () => issueTaxInvoiceFromSale(b.getAttribute("data-t-tax"))));
   el.querySelectorAll("[data-ti-open]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); taxInvoiceForm(b.getAttribute("data-ti-open")); }));
 }
@@ -299,10 +301,15 @@ function tradeRowHTML(kind, r) {
     : '<span class="badge red">' + (kind === "sales" ? "미수" : "미지급") + "</span>";
   const unpaid = unpaidAmount(r);
 
+  const orderTag = kind === "purchases"
+    ? ' <span class="badge ' + (r.orderType === "수입" ? "purple" : "gray") + '" title="매입 주문서 구분">' + esc(r.orderType || "국내") + "</span>" +
+      (r.orderNo ? ' <span class="ci-sub">' + esc(r.orderNo) + "</span>" : "") +
+      (r.dueDate && r.status !== "입고완료" ? ' <span class="ci-sub">납기 ' + esc(r.dueDate) + "</span>" : "")
+    : "";
   return "<tr>" +
     '<td style="white-space:nowrap">' + esc(r.date) + "</td>" +
-    '<td style="min-width:110px">' + esc(partnerName(r.partnerId)) + "</td>" +
-    "<td>" + esc(lineSummary(r.lines)) + "</td>" +
+    '<td style="min-width:110px">' + esc(partnerName(r.partnerId)) + orderTag + "</td>" +
+    "<td>" + esc(lineSummary(r.lines)) + (kind === "purchases" && r.status === "부분입고" ? ' <span class="badge orange">' + purchaseRecvSummary(r) + "</span>" : "") + "</td>" +
     '<td class="num">' + fmtMoney(r.supply) + "</td>" +
     '<td class="num">' + fmtMoney(r.vat) + "</td>" +
     '<td class="num"><b>' + fmtMoney(r.total) + "</b></td>" +
@@ -330,6 +337,8 @@ function tradeRowHTML(kind, r) {
     '<button class="btn btn-sm" data-t-pay="' + r.id + '">' + cfg.payLabel + "</button> " +
     (kind === "sales" && isModuleOn("documents") ? '<button class="btn btn-sm" data-t-doc="' + r.id + '">명세서</button> ' : "") +
     (kind === "sales" && isModuleOn("shipping") ? '<button class="btn btn-sm" data-t-ship="' + r.id + '">배송</button> ' : "") +
+    (kind === "purchases" ? '<button class="btn btn-sm" data-t-order="' + r.id + '" title="주문서(발주서) 인쇄">주문서</button> ' +
+      (r.status !== "입고완료" ? '<button class="btn btn-sm btn-primary" data-t-recv="' + r.id + '" title="물건이 들어오면 입고 처리 → 재고 반영">입고</button> ' : "") : "") +
     '<button class="btn btn-sm" data-t-edit="' + r.id + '">수정</button> ' +
     '<button class="btn btn-sm" data-t-del="' + r.id + '">삭제</button></td></tr>';
 }
@@ -399,6 +408,7 @@ function tradeForm(kind, id) {
       '<td style="width:130px"><textarea data-lf="spec" data-i="' + i + '" rows="1" placeholder="규격" ' +
       'style="min-height:36px;resize:none;overflow:hidden">' + esc(ln.spec || "") + "</textarea></td>" +
       '<td style="width:90px"><input type="text" class="num" data-lf="qty" data-i="' + i + '" value="' + fmtMoney(ln.qty) + '"></td>' +
+      (kind === "purchases" ? '<td class="trf-fx-only" style="width:100px"><input type="text" class="num" data-lf="fxPrice" data-i="' + i + '" value="' + (ln.fxPrice != null && ln.fxPrice !== "" ? ln.fxPrice : "") + '" placeholder="외화"></td>' : "") +
       '<td style="width:120px"><input type="text" class="num" data-lf="unitPrice" data-i="' + i + '" value="' + fmtMoney(ln.unitPrice) + '"></td>' +
       '<td class="num" style="width:120px" data-amount="' + i + '">' + fmtMoney((ln.qty || 0) * (ln.unitPrice || 0)) + "</td>" +
       '<td style="width:110px"><input type="text" data-lf="note" data-i="' + i + '" value="' + esc(ln.note || "") + '" placeholder="기타"></td>' +
@@ -443,9 +453,18 @@ function tradeForm(kind, id) {
 
     // 전잔금·이번 거래·총미수 — 거래처를 고르면 바로 보인다 (매출만)
     (kind === "sales" ? '<div id="trf-balance" class="card" style="margin-top:10px;margin-bottom:0;padding:8px 12px;background:var(--bg);display:none"></div>' : "") +
+    // 매입: 주문서(발주) 정보 — 국내/수입, 발주번호, 납기, 수입이면 통화·환율
+    (kind === "purchases" ?
+      '<div class="card" style="margin:10px 0 0;padding:8px 12px;background:var(--bg);display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">' +
+      '<div class="form-field" style="margin:0;width:110px"><label>구분</label><select id="trf-otype">' + ["국내", "수입"].map((v) => "<option" + ((rec ? rec.orderType : "국내") === v ? " selected" : "") + ">" + v + "</option>").join("") + "</select></div>" +
+      '<div class="form-field" style="margin:0;width:150px"><label>발주번호</label><input type="text" id="trf-ono" value="' + esc(rec && rec.orderNo ? rec.orderNo : nextOrderNo()) + '"></div>' +
+      '<div class="form-field" style="margin:0;width:160px"><label>납기일</label><input type="date" id="trf-due" value="' + esc(rec ? rec.dueDate || "" : "") + '"></div>' +
+      '<div class="form-field trf-fx-only" style="margin:0;width:100px"><label>통화</label><select id="trf-cur">' + ["CNY", "USD", "JPY"].map((v) => "<option" + ((rec && rec.currency !== "KRW" ? rec.currency : "CNY") === v ? " selected" : "") + ">" + v + "</option>").join("") + "</select></div>" +
+      '<div class="form-field trf-fx-only" style="margin:0;width:120px"><label>환율 <span class="sub">(원/1단위)</span></label><input type="text" class="num" id="trf-fx" value="' + (rec && rec.fxRate ? fmtMoney(rec.fxRate) : "") + '" placeholder="예: 195"></div>' +
+      '<span class="sub trf-fx-only">외화 단가 × 환율 = 원화 단가(자동). 통관 후 실제 원화는 수정으로 맞추세요</span></div>' : "") +
 
     '<div style="margin-top:12px"><table class="grid" id="trf-lines"><thead><tr>' +
-    "<th>품목</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">금액</th><th>기타</th><th></th></tr></thead>" +
+    "<th>품목</th><th>규격</th><th>수량</th>" + (kind === "purchases" ? '<th class="trf-fx-only">단가(외화)</th>' : "") + "<th>단가" + (kind === "purchases" ? "(원)" : "") + "</th><th class=\"num\">금액</th><th>기타</th><th></th></tr></thead>" +
     "<tbody>" + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="trf-addline" style="margin-top:8px">+ 품목 줄 추가</button></div>' +
     // 매출: 할인·입금을 같이 적으면 저장 때 바로 처리 (현금 거래·방문 수령 등)
@@ -660,6 +679,20 @@ function tradeForm(kind, id) {
         }
       });
     });
+    overlay.querySelectorAll('[data-lf="fxPrice"]').forEach((inp) => {
+      inp.addEventListener("input", () => {
+        const i = Number(inp.getAttribute("data-i"));
+        const fx = parseFloat(String(inp.value).replace(/[^0-9.]/g, "")) || 0;
+        lines[i].fxPrice = fx;
+        const rate = parseFloat(String((overlay.querySelector("#trf-fx") || {}).value || "").replace(/[^0-9.]/g, "")) || 0;
+        if (rate > 0) {
+          lines[i].unitPrice = Math.round(fx * rate);
+          overlay.querySelector('[data-lf="unitPrice"][data-i="' + i + '"]').value = fmtMoney(lines[i].unitPrice);
+          overlay.querySelector('[data-amount="' + i + '"]').textContent = fmtMoney((lines[i].qty || 0) * (lines[i].unitPrice || 0));
+          overlay.querySelector("#trf-totals").innerHTML = totalsHTML();
+        }
+      });
+    });
     ["qty", "unitPrice"].forEach((fld) => {
       overlay.querySelectorAll('[data-lf="' + fld + '"]').forEach((inp) => {
         inp.addEventListener("input", () => {
@@ -682,6 +715,29 @@ function tradeForm(kind, id) {
     });
   }
   bindLineEvents();
+
+  // 매입: 국내/수입 전환 → 외화 열 표시, 수입이면 부가세 미적용(세관 납부) 기본
+  const otype = overlay.querySelector("#trf-otype");
+  if (otype) {
+    const applyType = () => {
+      const imp = otype.value === "수입";
+      overlay.querySelectorAll(".trf-fx-only").forEach((el) => { el.style.display = imp ? "" : "none"; });
+      if (imp && !rec) { vatMode = "exempt"; const vm = overlay.querySelector("#trf-vatmode"); if (vm) vm.value = "exempt"; overlay.querySelector("#trf-totals").innerHTML = totalsHTML(); }
+    };
+    otype.addEventListener("change", applyType);
+    applyType();
+    overlay.querySelector("#trf-fx").addEventListener("input", () => {
+      const rate = parseFloat(String(overlay.querySelector("#trf-fx").value).replace(/[^0-9.]/g, "")) || 0;
+      if (!(rate > 0)) return;
+      lines.forEach((ln, i) => {
+        if (!(ln.fxPrice > 0)) return;
+        ln.unitPrice = Math.round(ln.fxPrice * rate);
+        const el = overlay.querySelector('[data-lf="unitPrice"][data-i="' + i + '"]'); if (el) el.value = fmtMoney(ln.unitPrice);
+        const am = overlay.querySelector('[data-amount="' + i + '"]'); if (am) am.textContent = fmtMoney((ln.qty || 0) * ln.unitPrice);
+      });
+      overlay.querySelector("#trf-totals").innerHTML = totalsHTML();
+    });
+  }
 
   if (kind === "sales" && isModuleOn("shipping")) bindSaleShipSection(overlay, lines);
   // 할인율/할인 금액 입력 → 합계 줄 갱신
@@ -762,7 +818,8 @@ function tradeForm(kind, id) {
       const partnerId = overlay.querySelector("#trf-partner").value;
       if (!partnerId || !getPartner(partnerId)) { toast("거래처를 검색해 목록에서 선택하세요.", "error"); return; }
       const cleanLines = lines
-        .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0, note: (l.note || "").trim() }))
+        .map((l) => Object.assign({ itemId: l.itemId || "", name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0, note: (l.note || "").trim() },
+          kind === "purchases" ? { fxPrice: Number(l.fxPrice) || 0, recvQty: Number(l.recvQty) || 0 } : {}))
         .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력
       if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요 (품명·수량 필수). 반품은 수량을 음수(-)로 입력하세요.", "error"); return; }
       // 할인: "할인" 줄(단가 음수)로 넣는다 → 합계·명세서에 그대로 반영
@@ -780,6 +837,15 @@ function tradeForm(kind, id) {
         status: overlay.querySelector("#trf-status").value,
         memo: overlay.querySelector("#trf-memo").value.trim()
       };
+      if (kind === "purchases") {
+        const imp = overlay.querySelector("#trf-otype").value === "수입";
+        Object.assign(data, {
+          orderType: imp ? "수입" : "국내", orderNo: overlay.querySelector("#trf-ono").value.trim(), dueDate: overlay.querySelector("#trf-due").value || "",
+          currency: imp ? overlay.querySelector("#trf-cur").value : "KRW",
+          fxRate: imp ? (parseFloat(String(overlay.querySelector("#trf-fx").value).replace(/[^0-9.]/g, "")) || 0) : 0
+        });
+        if (!rec && data.orderNo === nextOrderNo()) state.seq.order++;
+      }
       let savedRec = rec;
       if (rec) Object.assign(rec, data);
       else {
