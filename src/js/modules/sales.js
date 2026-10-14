@@ -89,7 +89,8 @@ function salesListBookHTML() {
         '<td class="num"><b>' + won(e.amount) + "</b></td>" +
         '<td class="num"><b style="color:var(--text)">' + won(e.after) + "</b></td>" +
         '<td><span class="badge green">입금</span></td><td></td>' +
-        '<td class="actions" style="white-space:nowrap"><button class="btn btn-sm" data-book-paydel="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 삭제</button></td></tr>';
+        '<td class="actions" style="white-space:nowrap"><button class="btn btn-sm" data-book-payedit="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 수정</button> ' +
+        '<button class="btn btn-sm" data-book-paydel="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 삭제</button></td></tr>';
     }
     const r = getSale(e.id);
     if (!r) return "";
@@ -220,13 +221,16 @@ function renderTradeList(kind, el) {
   if (todoBtn) todoBtn.addEventListener("click", () => todoForm(null));
   const openBal = el.querySelector("#btn-open-balance");
   if (openBal) openBal.addEventListener("click", () => openPopupWindow("sales", "balance")); // 별도 창 — 5초마다 자동 갱신
-  // 거래처 이름 클릭 → 그 거래처 장부 모달 / 입금 줄 삭제
-  el.addEventListener("click", (e) => {
+  // 거래처 이름 클릭 → 그 거래처 장부 모달 / 입금 줄 삭제·수정
+  // (el은 렌더마다 재사용되는 컨테이너라 addEventListener로 쌓으면 모달이 여러 개 열린다 → onclick으로 덮어쓰기)
+  el.onclick = (e) => {
     const a = e.target.closest && e.target.closest("[data-book-partner]");
     if (a) { e.preventDefault(); openPartnerBookModal(a.getAttribute("data-book-partner")); return; }
     const b = e.target.closest && e.target.closest("[data-book-paydel]");
-    if (b) deleteBookPayment(b.getAttribute("data-book-paydel"), b.getAttribute("data-date"), b.getAttribute("data-desc"));
-  });
+    if (b) { deleteBookPayment(b.getAttribute("data-book-paydel"), b.getAttribute("data-date"), b.getAttribute("data-desc")); return; }
+    const c = e.target.closest && e.target.closest("[data-book-payedit]");
+    if (c) editBookPayment(c.getAttribute("data-book-payedit"), c.getAttribute("data-date"), c.getAttribute("data-desc"));
+  };
   bindBookEntry(el);
 
   // 필터 이벤트
@@ -428,6 +432,13 @@ function tradeForm(kind, id) {
     "<th>품목</th><th>규격</th><th>수량</th><th>단가</th><th class=\"num\">금액</th><th>기타</th><th></th></tr></thead>" +
     "<tbody>" + linesHTML() + "</tbody></table>" +
     '<button class="btn btn-sm" id="trf-addline" style="margin-top:8px">+ 품목 줄 추가</button></div>' +
+    // 매출: 할인·입금을 같이 적으면 저장 때 바로 처리 (현금 거래·방문 수령 등)
+    (kind === "sales" ?
+      '<div class="card" style="margin:12px 0 0;padding:8px 12px;background:var(--bg);display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">' +
+      '<div class="form-field" style="margin:0;width:150px"><label>할인 <span class="sub">(합계에서 뺌)</span></label><input type="text" class="num" id="trf-disc" value="" placeholder="0"></div>' +
+      '<div class="form-field" style="margin:0;width:160px"><label>이번에 받은 입금 <span class="sub">(이 매출에 바로 수금)</span></label><input type="text" class="num" id="trf-payamt" value="" placeholder="0"></div>' +
+      '<div class="form-field" style="margin:0;width:140px"><label>입금은행</label><select id="trf-paybank">' + BOOK_BANKS.filter((b) => b !== "할인").map((b) => '<option value="' + b + '"' + (b === (state.prefs.defPayBank || "") ? " selected" : "") + ">" + (b || "(은행)") + "</option>").join("") + "</select></div>" +
+      '<span class="sub" id="trf-paynote">비우면 외상(미수). 할인은 "할인" 품목 줄로 들어가 명세서에도 찍힙니다</span></div>' : "") +
 
     '<div style="margin-top:12px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">' +
     '<label style="display:flex;align-items:center;gap:6px">부가세 <select id="trf-vatmode" style="width:auto">' +
@@ -721,6 +732,10 @@ function tradeForm(kind, id) {
         .map((l) => ({ itemId: l.itemId || "", name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0, note: (l.note || "").trim() }))
         .filter((l) => l.name && l.qty !== 0); // 반품은 수량을 음수로 입력
       if (!cleanLines.length) { toast("품목을 1줄 이상 입력하세요 (품명·수량 필수). 반품은 수량을 음수(-)로 입력하세요.", "error"); return; }
+      // 할인: "할인" 줄(단가 음수)로 넣는다 → 합계·명세서에 그대로 반영
+      const discEl = overlay.querySelector("#trf-disc");
+      const disc = discEl ? parseMoney(discEl.value) : 0;
+      if (disc > 0) cleanLines.push({ itemId: "", name: "할인", spec: "", qty: 1, unitPrice: -disc, note: "" });
 
       const { supply, vat, total } = calcAmounts(cleanLines);
       const data = {
@@ -739,6 +754,21 @@ function tradeForm(kind, id) {
         state[cfg.listKey].push(savedRec);
       }
       if (kind === "sales" && isModuleOn("shipping")) saveSaleShipSection(overlay, savedRec);
+      // 이번에 받은 입금 → 이 매출 건에 바로 수금 기록
+      const payEl = overlay.querySelector("#trf-payamt");
+      const payAmt = payEl ? parseMoney(payEl.value) : 0;
+      if (payAmt > 0) {
+        const bank = overlay.querySelector("#trf-paybank").value;
+        const method = bankToMethod(bank);
+        const un = unpaidAmount(savedRec);
+        const amt = Math.min(payAmt, Math.max(un, 0));
+        if (amt > 0) {
+          savedRec.payments = savedRec.payments || [];
+          savedRec.payments.push({ date: data.date, amount: amt, method, memo: ["입금", bankTagOf(bank, method)].filter(Boolean).join(" / ") });
+        }
+        if (payAmt > amt) toast("입금액이 이 매출의 미수(" + fmtMoney(un) + ")보다 커서 " + fmtMoney(amt) + "원만 기록했습니다. 나머지는 [수금]에서 다른 건에 배분하세요.", "error");
+        if (bank) state.prefs.defPayBank = bank;
+      }
       // 매출 저장 후 거래명세서 바로 발행 옵션 (명세서 폼이 이 매출로 채워져 열림)
       const toStmt = overlay.querySelector("#trf-tostmt");
       markDirty();
@@ -1163,7 +1193,8 @@ function salesBookHTML(ev, compact) {
           (isModuleOn("documents") ? '<button class="btn btn-sm" data-t-doc="' + e.id + '">명세서</button> ' : "") +
           '<button class="btn btn-sm" data-t-edit="' + e.id + '">수정</button> ' +
           '<button class="btn btn-sm" data-t-del="' + e.id + '">삭제</button>'
-          : '<button class="btn btn-sm" data-book-paydel="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 삭제</button>') + "</td>") +
+          : '<button class="btn btn-sm" data-book-payedit="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 수정</button> ' +
+            '<button class="btn btn-sm" data-book-paydel="' + e.pid + '" data-date="' + esc(e.date) + '" data-desc="' + esc(e.desc) + '">입금 삭제</button>') + "</td>") +
       "</tr>";
   }).join("");
   const totSale = sum(ev.filter((e) => e.t === "trade" && !e.mall), (e) => e.amount);
@@ -1339,7 +1370,7 @@ function exportBalanceXlsx(rows, f) {
  *  쇼핑몰 판매액 칸    → 위탁몰 매출 (전액 수금 처리, 미수 미발생)
  *  둘 다 적으면 매출 먼저, 입금 나중 (장부 규칙과 동일)
  * ============================================================ */
-const BOOK_BANKS = ["", "기업-425", "농협-301", "현금", "가계수표", "어음", "카드", "기타"];
+const BOOK_BANKS = ["", "기업-425", "농협-301", "현금", "가계수표", "어음", "카드", "할인", "기타"]; // 할인 = 돈 안 받고 미수를 깎아줌(매출할인)
 let bookEntryDraft = { bank: "", date: "", partnerId: "", partnerName: "", desc: "", sale: "", pay: "", memo: "", mall: "" };
 let bookNewestFirst = true; // 목록·장부: 최근 줄을 위로 (끄면 엑셀처럼 날짜순)
 
@@ -1448,8 +1479,8 @@ async function saveBookEntry(el) {
   if (sale) { mkSale(sale, desc, "", false); done.push((sale < 0 ? "반품 " : "매출 ") + fmtMoney(sale)); }
   if (mall) { mkSale(mall, desc || "쇼핑몰 판매", "쇼핑몰 판매액", true); done.push("쇼핑몰 " + fmtMoney(mall)); }
   if (pay) {
-    const method = /현금/.test(d.bank) ? "현금" : /카드/.test(d.bank) ? "카드" : /어음|수표|기타|^$/.test(d.bank) ? "기타" : "계좌이체";
-    const bankTag = d.bank ? (method === "계좌이체" ? "계좌이체(" + d.bank + ")" : /어음|수표/.test(d.bank) ? d.bank + "(" + d.bank + ")" : d.bank) : "";
+    const method = bankToMethod(d.bank);
+    const bankTag = bankTagOf(d.bank, method);
     const pmemo = [desc || "입금", bankTag, memo].filter(Boolean).join(" / ");
     if (pay < 0) { toast("입금액은 양수만 가능합니다. 환급은 할인 전표(매출&반품에 음수)로 처리하세요.", "error"); return; }
     const bal = partnerBalance(p.id, "sales");
@@ -1470,6 +1501,74 @@ async function saveBookEntry(el) {
   toast(p.name + " — " + done.join(" · ") + " 저장", "success");
   const next = document.querySelector('.book-entry [data-be="partnerName"]');
   if (next) next.focus();
+}
+
+/** 입금은행 선택값 → 결제수단 */
+function bankToMethod(bank) {
+  return /할인/.test(bank) ? "할인" : /현금/.test(bank) ? "현금" : /카드/.test(bank) ? "카드" : /어음|수표|기타|^$/.test(bank || "") ? "기타" : "계좌이체";
+}
+/** 입금 메모에 붙는 은행 꼬리표 (장부 보기의 "입금은행" 칸이 이걸로 복원됨) */
+function bankTagOf(bank, method) {
+  if (!bank) return "";
+  if (method === "계좌이체") return "계좌이체(" + bank + ")";
+  if (/어음|수표/.test(bank)) return bank + "(" + bank + ")";
+  return bank;
+}
+
+/** 장부의 입금 줄 수정 — 날짜·금액·은행·적요를 바꾸면 기존 배분을 지우고 다시 배분한다 */
+async function editBookPayment(pid, date, desc) {
+  if (guardReadOnly()) return;
+  const p = getPartner(pid);
+  if (!p) return;
+  const matchMemo = (m) => descOf(cleanMemo(String(m || "").replace(/\s*\(반품 상계\)\s*/g, ""))) === desc;
+  let total = 0, n = 0, sample = null;
+  state.sales.forEach((s) => { if (s.partnerId === pid) (s.payments || []).forEach((pm) => { if (pm.date === date && matchMemo(pm.memo)) { total += Number(pm.amount) || 0; n++; sample = sample || pm; } }); });
+  (p.openingPayments || []).forEach((x) => { if (x.kind === "수금" && x.date === date && matchMemo(x.memo)) { total += Number(x.amount) || 0; n++; sample = sample || x; } });
+  if (!n) { toast("해당 입금 기록을 찾지 못했습니다.", "error"); return; }
+  // 메모에서 은행·비고(계산서 메모) 복원
+  const parts = String(sample.memo || "").split(/\s+\/\s+/);
+  const bankPart = parts.find((x) => /^(계좌이체|이체|어음|수표|카드|현금|할인)(\(|$)/.test(x)) || "";
+  const bm = /\(([^)]+)\)/.exec(bankPart);
+  const bank = bm ? bm[1] : (BOOK_BANKS.includes(bankPart) ? bankPart : "");
+  const taxMemo = cleanMemo(sample.memo).filter((x) => /계산서|발행|발급/.test(x)).join(" / ");
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = '<div class="modal-box"><h3 style="margin-bottom:12px">입금 수정 — ' + esc(p.name) + "</h3>" +
+    '<p class="sub" style="margin-bottom:10px">' + esc(date) + " · " + fmtMoney(total) + "원 (" + n + "건에 배분됨). 저장하면 기존 배분을 지우고 새 값으로 다시 배분합니다.</p>" +
+    '<div class="form-grid" style="grid-template-columns:repeat(2,1fr)">' +
+    '<div class="form-field"><label>날짜</label><input type="date" id="bpe-date" value="' + esc(date) + '"></div>' +
+    '<div class="form-field"><label>입금액</label><input type="text" class="num" id="bpe-amt" value="' + fmtMoney(total) + '"></div>' +
+    '<div class="form-field"><label>입금은행 / 수단</label><select id="bpe-bank">' + BOOK_BANKS.map((b) => '<option value="' + b + '"' + (bank === b ? " selected" : "") + ">" + (b || "(없음)") + "</option>").join("") + "</select></div>" +
+    '<div class="form-field"><label>적요</label><input type="text" id="bpe-desc" value="' + esc(desc) + '"></div>' +
+    '<div class="form-field span2"><label>비고 (세금계산서 메모 등)</label><input type="text" id="bpe-memo" value="' + esc(taxMemo) + '"></div>' +
+    "</div>" +
+    '<div class="modal-btns" style="margin-top:14px"><button class="btn" data-act="cancel">취소</button><button class="btn btn-primary" data-act="save">저장</button></div></div>';
+  const q = (sel) => overlay.querySelector(sel);
+  overlay.addEventListener("click", async (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute("data-act");
+    if (e.target === overlay || act === "cancel") { overlay.remove(); return; }
+    if (act !== "save") return;
+    const nd = q("#bpe-date").value || date, amt = parseMoney(q("#bpe-amt").value), nb = q("#bpe-bank").value;
+    const ndesc = q("#bpe-desc").value.trim() || "입금", nmemo = q("#bpe-memo").value.trim();
+    if (amt <= 0) { toast("입금액은 양수여야 합니다.", "error"); return; }
+    // 기존 배분 제거 → 잔액 복원 → 재배분
+    state.sales.forEach((s) => { if (s.partnerId === pid) s.payments = (s.payments || []).filter((pm) => !(pm.date === date && matchMemo(pm.memo))); });
+    p.openingPayments = (p.openingPayments || []).filter((x) => !(x.kind === "수금" && x.date === date && matchMemo(x.memo)));
+    const method = bankToMethod(nb);
+    const pmemo = [ndesc, bankTagOf(nb, method), nmemo].filter(Boolean).join(" / ");
+    const bal = partnerBalance(pid, "sales");
+    let applied = amt;
+    if (amt > bal) {
+      applied = Math.max(bal, 0);
+      toast("미수 잔액(" + fmtMoney(bal) + ")보다 커서 잔액만큼만 배분했습니다. 초과 " + fmtMoney(amt - bal) + "원은 메모에 남김", "error");
+      if (applied > 0) applyBulkPayment("sales", pid, applied, nd, method, pmemo + " (초과입금 " + fmtMoney(amt - bal) + " 미배분)");
+    } else applyBulkPayment("sales", pid, amt, nd, method, pmemo);
+    markDirty(); overlay.remove(); renderApp();
+    toast(p.name + " 입금을 " + fmtMoney(applied) + "원으로 수정했습니다.", "success");
+  });
+  document.body.appendChild(overlay);
+  q("#bpe-amt").focus();
 }
 
 /** 장부의 입금 줄 삭제 — 같은 날·거래처·적요로 배분된 수금 기록을 모두 지운다 */

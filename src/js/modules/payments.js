@@ -145,7 +145,7 @@ function bulkPaymentForm(kind, presetPartnerId) {
     '<div id="bp-partner-list" class="combo-list" style="display:none"></div></div>' +
     '<div class="form-field"><label>날짜</label><input type="date" id="bp-date" value="' + today() + '"></div>' +
     '<div class="form-field"><label>방법</label><select id="bp-method">' +
-    ["현금", "계좌이체", "카드", "기타"].map((m) => "<option>" + m + "</option>").join("") + "</select></div>" +
+    ["현금", "계좌이체", "카드", "할인", "기타"].map((m) => "<option>" + m + "</option>").join("") + "</select></div>" +
     '<div class="form-field"><label>받은 금액 *</label><input type="text" class="num" id="bp-amount" value="0"></div>' +
     '<div class="form-field" style="grid-column:span 3"><label>메모</label><input type="text" id="bp-memo" placeholder="예: 7월분 정산"></div>' +
     "</div>" +
@@ -498,7 +498,7 @@ function paymentForm(kind, recId) {
       ? '<table class="grid" style="margin-bottom:12px"><thead><tr><th>날짜</th><th class="num">금액</th><th>방법</th><th>메모</th><th></th></tr></thead><tbody>' +
         rec.payments.map((p, i) =>
           "<tr><td>" + esc(p.date) + '</td><td class="num">' + fmtMoney(p.amount) + "</td><td>" + esc(p.method) + "</td><td>" + esc(p.memo) + "</td>" +
-          '<td><button class="btn btn-sm" data-delpay="' + i + '">삭제</button></td></tr>').join("") +
+          '<td style="white-space:nowrap"><button class="btn btn-sm" data-editpay="' + i + '">수정</button> <button class="btn btn-sm" data-delpay="' + i + '">삭제</button></td></tr>').join("") +
         "</tbody></table>"
       : '<p class="sub" style="margin-bottom:12px">아직 ' + cfg.payLabel + " 기록이 없습니다.</p>";
   }
@@ -517,14 +517,25 @@ function paymentForm(kind, recId) {
     '<div class="form-field"><label>날짜</label><input type="date" id="pyf-date" value="' + today() + '"></div>' +
     '<div class="form-field"><label>금액</label><input type="text" class="num" id="pyf-amount" value="' + fmtMoney(Math.max(unpaid, 0)) + '"></div>' +
     '<div class="form-field"><label>방법</label><select id="pyf-method">' +
-    ["현금", "계좌이체", "카드", "기타"].map((m) => "<option>" + m + "</option>").join("") + "</select></div>" +
+    ["현금", "계좌이체", "카드", "할인", "기타"].map((m) => "<option>" + m + "</option>").join("") + "</select></div>" +
     '<div class="form-field"><label>메모</label><input type="text" id="pyf-memo" placeholder="계약금, 잔금 등"></div>' +
     "</div>" +
     '<div class="modal-btns" style="margin-top:16px">' +
     '<button class="btn" data-act="cancel">닫기</button>' +
     '<button class="btn btn-primary" data-act="save">' + cfg.payLabel + " 기록</button></div></div>";
 
+  let editIdx = -1; // 수정 중인 기록 번호 (-1 = 새 기록)
   function bindDelete() {
+    overlay.querySelectorAll("[data-editpay]").forEach((b) => {
+      b.addEventListener("click", () => {
+        editIdx = Number(b.getAttribute("data-editpay"));
+        const pm = rec.payments[editIdx];
+        overlay.querySelector("#pyf-date").value = pm.date; overlay.querySelector("#pyf-amount").value = fmtMoney(pm.amount);
+        overlay.querySelector("#pyf-method").value = pm.method || "기타"; overlay.querySelector("#pyf-memo").value = pm.memo || "";
+        overlay.querySelector('[data-act="save"]').textContent = "기록 수정 저장";
+        overlay.querySelector("#pyf-amount").focus();
+      });
+    });
     overlay.querySelectorAll("[data-delpay]").forEach((b) => {
       b.addEventListener("click", async () => {
         const i = Number(b.getAttribute("data-delpay"));
@@ -546,8 +557,8 @@ function paymentForm(kind, recId) {
     if (act === "save") {
       const amount = parseMoney(overlay.querySelector("#pyf-amount").value);
       if (amount <= 0) { toast("금액을 입력하세요.", "error"); return; }
-      // 초과 수금 경고 (SPEC 6.7)
-      const remaining = unpaidAmount(rec);
+      // 초과 수금 경고 (SPEC 6.7) — 수정 중이면 그 기록 금액은 미수에서 되돌려 계산
+      const remaining = unpaidAmount(rec) + (editIdx >= 0 ? (Number(rec.payments[editIdx].amount) || 0) : 0);
       if (amount > remaining) {
         const ok = await confirmDialog(
           "⚠️ 입력 금액(" + fmtMoney(amount) + "원)이 " + cfg.unpaidLabel + "(" + fmtMoney(remaining) + "원)보다 큽니다.\n그래도 기록할까요?",
@@ -555,18 +566,21 @@ function paymentForm(kind, recId) {
         if (!ok) return;
       }
       rec.payments = rec.payments || [];
-      rec.payments.push({
+      const entry = {
         date: overlay.querySelector("#pyf-date").value || today(),
         amount,
         method: overlay.querySelector("#pyf-method").value,
         memo: overlay.querySelector("#pyf-memo").value.trim()
-      });
+      };
+      const wasEdit = editIdx >= 0;
+      if (wasEdit) { rec.payments[editIdx] = entry; editIdx = -1; overlay.querySelector('[data-act="save"]').textContent = cfg.payLabel + " 기록"; overlay.querySelector("#pyf-memo").value = ""; }
+      else rec.payments.push(entry);
       markDirty();
       overlay.querySelector("#pay-history").innerHTML = historyHTML();
       overlay.querySelector("#pay-summary").innerHTML = summaryHTML();
       overlay.querySelector("#pyf-amount").value = fmtMoney(Math.max(unpaidAmount(rec), 0));
       bindDelete();
-      toast(cfg.payLabel + " " + fmtMoney(amount) + "원을 기록했습니다." +
+      toast(cfg.payLabel + " " + fmtMoney(amount) + "원을 " + (wasEdit ? "수정" : "기록") + "했습니다." +
         (unpaidAmount(rec) <= 0 ? " (완납)" : " (" + cfg.unpaidLabel + " " + fmtMoney(unpaidAmount(rec)) + "원 남음)"), "success");
     }
   });

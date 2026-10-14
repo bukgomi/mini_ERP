@@ -16,6 +16,8 @@ let expEvidFilter = "";   // 증빙 필터 ("(미입력)" = 비어 있는 것만
 let expCheckOnly = false; // 확인필요 건만
 let expSearch = "";      // 거래처·내용 검색
 const EXP_EMPTY = "(미입력)";
+// 표 맨 위 바로 입력 줄 (매출 관리의 입력 줄과 같은 방식) — 날짜·결제수단·사용처·구분은 다음 줄에 유지
+let expEntryDraft = { date: "", biz: "도매", category: "", partner: "", desc: "", total: "", ded: false, method: "", evidence: "카드전표", usage: "사무실" };
 
 function renderExpenses(el) {
   if (!expYear) expYear = String(new Date().getFullYear());
@@ -91,6 +93,7 @@ function renderExpenses(el) {
     '<th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th><th>공제</th><th class="num">비용금액</th>' +
     "<th>결제수단</th><th>증빙</th><th>사용처</th><th>확인필요</th>" +
     (isModuleOn("receipts") ? "<th>첨부</th>" : "") + "<th></th></tr></thead><tbody>" +
+    (readOnlyMode ? "" : expEntryRowHTML()) +
     (list.length ? list.map((e) => {
       const c = expenseCalc(e);
       const receipt = isModuleOn("receipts")
@@ -123,6 +126,7 @@ function renderExpenses(el) {
     "</table></div></div>";
 
   // ---- 이벤트 ----
+  bindExpEntry(el);
   el.querySelector("#exp-year").addEventListener("change", (e) => { expYear = e.target.value; renderApp(); });
   el.querySelector("#exp-month").addEventListener("change", (e) => { expMonth = e.target.value; renderApp(); });
   el.querySelector("#exp-biz").addEventListener("change", (e) => { expBizFilter = e.target.value; renderApp(); });
@@ -160,6 +164,73 @@ function renderExpenses(el) {
   el.querySelectorAll("[data-attach]").forEach((b) => b.addEventListener("click", () => {
     receiptUploadForm({ kind: "expense", id: b.getAttribute("data-attach") });
   }));
+}
+
+/** 표 맨 위 입력 줄 */
+function expEntryRowHTML() {
+  const d = expEntryDraft;
+  if (!d.date) d.date = today();
+  if (!d.method) d.method = expenseMethodList()[0] || "";
+  const W = { biz: 70, category: 130, method: 120, evidence: 150, usage: 84 };
+  const sel = (f, list, blankLabel) => '<select data-ee="' + f + '" style="font-size:12px;padding:3px 5px;height:auto;width:' + W[f] + 'px;min-width:' + W[f] + 'px">' + (blankLabel ? '<option value="">' + blankLabel + "</option>" : "") +
+    list.map((v) => '<option value="' + esc(v) + '"' + (d[f] === v ? " selected" : "") + ">" + esc(v) + "</option>").join("") + "</select>";
+  const inp = (f, ph, cls, w) => '<input type="text" data-ee="' + f + '" placeholder="' + ph + '" value="' + esc(d[f] || "") + '" class="' + (cls || "") + '" autocomplete="off" style="font-size:12px;padding:3px 5px;' + (w ? "width:" + w : "") + '">';
+  return '<tr class="book-entry" style="background:var(--bg)">' +
+    '<td><input type="date" data-ee="date" value="' + esc(d.date) + '" style="font-size:12px;padding:3px"></td>' +
+    "<td>" + sel("biz", EXP_BIZ, "(구분)") + "</td>" +
+    "<td>" + sel("category", state.expenseCategories, "(계정)") + "</td>" +
+    "<td>" + inp("partner", "거래처", "", "110px") + "</td>" +
+    "<td>" + inp("desc", "내용 (용도·목적)", "", "100%") + "</td>" +
+    '<td class="num"><span class="sub" id="ee-supply"></span></td><td class="num"><span class="sub" id="ee-vat"></span></td>' +
+    "<td>" + inp("total", "합계(결제금액)", "num", "100px") + "</td>" +
+    '<td style="text-align:center"><input type="checkbox" data-ee="ded"' + (d.ded ? " checked" : "") + ' title="부가세공제" style="width:auto"></td>' +
+    "<td></td>" +
+    "<td>" + sel("method", expenseMethodList()) + "</td>" +
+    "<td>" + sel("evidence", EXP_EVIDENCE) + "</td>" +
+    "<td>" + sel("usage", EXP_USAGE, "(사용처)") + "</td>" +
+    "<td></td>" + (isModuleOn("receipts") ? "<td></td>" : "") +
+    '<td class="actions"><button class="btn btn-sm btn-primary" id="ee-save">저장 (Enter)</button></td></tr>';
+}
+function bindExpEntry(el) {
+  const row = el.querySelector(".book-entry");
+  if (!row) return;
+  const thead = row.closest("table") && row.closest("table").querySelector("thead");
+  const topPx = thead ? thead.getBoundingClientRect().height : 38;
+  row.querySelectorAll("td").forEach((td) => { td.style.top = topPx + "px"; });
+  const d = expEntryDraft;
+  const preview = () => {
+    const tot = parseMoney(d.total); const sup = d.ded ? supplyFromTotal(tot) : tot;
+    row.querySelector("#ee-supply").textContent = tot ? fmtMoney(sup) : ""; row.querySelector("#ee-vat").textContent = tot && d.ded ? fmtMoney(tot - sup) : "";
+  };
+  row.querySelectorAll("[data-ee]").forEach((inp) => {
+    const f = inp.getAttribute("data-ee");
+    const read = () => { d[f] = inp.type === "checkbox" ? inp.checked : inp.value; preview(); };
+    inp.addEventListener("input", read); inp.addEventListener("change", read);
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveExpEntry(); } });
+  });
+  row.querySelector("#ee-save").addEventListener("click", saveExpEntry);
+  preview();
+}
+function saveExpEntry() {
+  if (guardReadOnly()) return;
+  const d = expEntryDraft;
+  const total = parseMoney(d.total);
+  if (!total) { toast("합계(결제금액)를 입력하세요.", "error"); return; }
+  if (!(d.desc || "").trim() && !(d.partner || "").trim()) { toast("내용 또는 거래처를 입력하세요.", "error"); return; }
+  const supply = d.ded ? supplyFromTotal(total) : total;
+  const rec = {
+    id: uid("e"), date: d.date || today(), biz: d.biz || "", category: d.category || "", partner: (d.partner || "").trim(), desc: (d.desc || "").trim(),
+    supply, vat: total - supply, total, vatDeductible: !!d.ded, method: d.method || "", evidence: d.evidence || "", usage: d.usage || "",
+    bizRatio: d.usage === "공용" ? 0.5 : 1, memo: ""
+  };
+  state.expenses.push(rec);
+  markDirty();
+  expYear = rec.date.slice(0, 4);
+  expEntryDraft = { date: d.date, biz: d.biz, category: "", partner: "", desc: "", total: "", ded: false, method: d.method, evidence: d.evidence, usage: d.usage };
+  renderApp();
+  toast((rec.partner || rec.desc) + " " + fmtMoney(total) + "원 경비 저장" + (rec.usage === "공용" ? " (사업비율 50% — 표에서 고치세요)" : ""), "success");
+  const next = document.querySelector('.book-entry [data-ee="partner"]');
+  if (next) next.focus();
 }
 
 /** 표 안 분류용 작은 드롭다운 (빈 값 = "—") */
