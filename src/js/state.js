@@ -280,6 +280,21 @@ function partnerBalance(partnerId, kind) {
  * = 기초 이월 + (기준일 이전 매출 합계) − (기준일 이전 수금 합계)
  * excludeSaleId: 당일 발행 대상 매출 건 제외용 (베이스 날짜 비교로 처리)
  */
+/**
+ * 장부(매출 관리 목록)와 같은 기준의 "전잔금": 기준일 이전 잔액 + 같은 날 이 건보다 먼저 적힌 매출
+ * (장부는 같은 날짜 안에서 매출 → 입금 순, 매출끼리는 적은 순서) — saleId가 없으면 새 매출(그날 맨 뒤) 기준
+ */
+function saleBookPrev(partnerId, dateStr, saleId) {
+  let bal = partnerBalanceBefore(partnerId, dateStr, "sales");
+  for (const r of state.sales) {
+    if (r.partnerId !== partnerId || r.date !== dateStr) continue;
+    if (saleId && r.id === saleId) break;
+    const mall = (r.payments || []).some((pm) => /쇼핑몰/.test(pm.memo || ""));
+    if (!mall) bal += Number(r.total) || 0;
+  }
+  return bal;
+}
+
 function partnerBalanceBefore(partnerId, dateStr, kind) {
   const p = getPartner(partnerId);
   const list = kind === "purchases" ? state.purchases : state.sales;

@@ -532,12 +532,16 @@ function tradeForm(kind, id) {
     const pid = pHidden().value;
     if (!pid || !getPartner(pid)) { box.style.display = "none"; return; }
     const date = overlay.querySelector("#trf-date").value || today();
-    const prev = partnerBalanceBefore(pid, date, "sales") - (rec ? Number(rec.total) || 0 : 0) * (rec && rec.date < date ? 1 : 0);
-    const cur = calcAmounts(lines).total;
+    // 전잔금 = 장부 기준 (그 날 이전 잔액 + 같은 날 먼저 적힌 매출). 수정 중이면 이 건 앞까지
+    const prev = saleBookPrev(pid, date, rec && rec.date === date ? rec.id : null);
+    const cur = calcAmounts(lines).total - currentDisc();
+    const payEl = overlay.querySelector("#trf-payamt");
+    const paid = payEl ? Math.min(parseMoney(payEl.value), Math.max(cur, 0)) : 0;
     box.style.display = "";
-    box.innerHTML = "<b>" + esc(getPartner(pid).name) + "</b> · 전잔금 <b>" + fmtMoney(prev) + "</b>원 + 이번 거래 <b>" + fmtMoney(cur) + "</b>원 = 총미수 " +
-      '<b style="font-size:15px;color:var(--danger)">' + fmtMoney(prev + cur) + "</b>원" +
-      ' <span class="sub">(전잔금 = ' + esc(date) + " 이전 미수 잔액 · 기초이월 포함)</span>";
+    box.innerHTML = "<b>" + esc(getPartner(pid).name) + "</b> · 전잔금 <b>" + fmtMoney(prev) + "</b>원 + 이번 거래 <b>" + fmtMoney(cur) + "</b>원" +
+      (paid ? " − 입금 <b>" + fmtMoney(paid) + "</b>원" : "") + " = 총미수 " +
+      '<b style="font-size:15px;color:var(--danger)">' + fmtMoney(prev + cur - paid) + "</b>원" +
+      ' <span class="sub">(전잔금 = 장부의 바로 앞 줄 잔액 · 기초이월 포함)</span>';
   }
 
   /** 줄 데이터 다시 그리기 (셀렉트/입력 유지 어려우므로 tbody만 갱신) */
@@ -683,8 +687,9 @@ function tradeForm(kind, id) {
   // 할인율/할인 금액 입력 → 합계 줄 갱신
   const discPct = overlay.querySelector("#trf-discpct"), discAmt = overlay.querySelector("#trf-disc");
   if (discPct) {
-    discPct.addEventListener("input", () => { if (!String(discPct.value).trim()) discAmt.value = ""; applyDiscPct(); overlay.querySelector("#trf-totals").innerHTML = totalsHTML(); });
-    discAmt.addEventListener("input", () => { discPct.value = ""; overlay.querySelector("#trf-totals").innerHTML = totalsHTML(); });
+    discPct.addEventListener("input", () => { if (!String(discPct.value).trim()) discAmt.value = ""; applyDiscPct(); overlay.querySelector("#trf-totals").innerHTML = totalsHTML(); refreshBalance(); });
+    discAmt.addEventListener("input", () => { discPct.value = ""; overlay.querySelector("#trf-totals").innerHTML = totalsHTML(); refreshBalance(); });
+    overlay.querySelector("#trf-payamt").addEventListener("input", refreshBalance);
     discAmt.addEventListener("blur", () => { discAmt.value = discAmt.value.trim() ? fmtMoney(parseMoney(discAmt.value)) : ""; });
   }
   overlay.querySelector("#trf-addline").addEventListener("click", () => {
@@ -721,11 +726,15 @@ function tradeForm(kind, id) {
       const pl = lines.map((l) => ({ name: (l.name || "").trim(), spec: (l.spec || "").trim(), qty: Number(l.qty) || 0, unitPrice: Number(l.unitPrice) || 0, note: (l.note || "").trim() }))
         .filter((l) => l.name && l.qty !== 0);
       if (!pl.length) { toast("품목을 1줄 이상 입력하세요.", "error"); return; }
+      const disc = currentDisc();
+      if (disc > 0) pl.push({ name: "할인", spec: "", qty: 1, unitPrice: -disc, note: "" }); // 저장 때와 같은 모양
       const date = overlay.querySelector("#trf-date").value || today();
-      const prev = partnerBalanceBefore(pid, date, "sales");
+      const prev = saleBookPrev(pid, date, rec && rec.date === date ? rec.id : null);
       const dayTotal = calcAmounts(pl).total;
+      const payEl = overlay.querySelector("#trf-payamt");
+      const paid = payEl ? Math.min(parseMoney(payEl.value), Math.max(dayTotal, 0)) : 0;
       const temp = { type: "statement", no: "(미발행)", date, partnerId: pid, lines: pl, discountRate: 0, showVat: false, memo: overlay.querySelector("#trf-memo").value.trim(),
-        twoCopies: state.prefs.defTwoCopies !== false, settle: { prevBalance: prev, dayTotal, sum: prev + dayTotal, paid: 0, balance: prev + dayTotal } };
+        twoCopies: state.prefs.defTwoCopies !== false, settle: { prevBalance: prev, dayTotal, sum: prev + dayTotal, paid, balance: prev + dayTotal - paid } };
       const pv = document.createElement("div");
       pv.className = "modal-overlay";
       pv.innerHTML = '<div class="modal-box" style="max-width:1150px;max-height:92vh;display:flex;flex-direction:column">' +
