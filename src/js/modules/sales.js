@@ -44,8 +44,13 @@ function computeTradeList(kind) {
 /** 필터 바 요약 텍스트 */
 function tradeSummaryText(kind, list) {
   const cfg = TRADE_CFG[kind];
+  // 매출: 미수는 "지금 전 거래처가 갚아야 할 잔액"(기초이월 포함) — 거래처 관리·거래처별 잔금과 같은 숫자
+  const pid = kind === "sales" ? tradeFilter.sales.partnerId : "";
+  const unpaid = kind === "sales"
+    ? (pid ? partnerBalance(pid, "sales") : sum(state.partners, (p) => partnerBalance(p.id, "sales")))
+    : sum(list, (r) => unpaidAmount(r));
   return list.length + "건 · 합계 " + fmtMoney(sum(list, (r) => r.total)) + "원 · " +
-    cfg.unpaidLabel + " " + fmtMoney(sum(list, (r) => unpaidAmount(r))) + "원";
+    (kind === "sales" ? (pid ? "이 거래처 현재 미수 " : "총미수(전 거래처·기초이월 포함) ") : cfg.unpaidLabel + " ") + fmtMoney(unpaid) + "원";
 }
 
 /** 본문: 보기 방식에 따라 목록 / 장부 / 거래처별 잔금 */
@@ -79,6 +84,17 @@ function salesListBookHTML() {
   // 누계는 날짜순으로 계산됐고, 표시는 최근 줄이 위로 (방금 적은 줄이 입력 줄 바로 아래에 보이도록)
   const shown = bookNewestFirst ? ev.slice().reverse() : ev;
   const rows = shown.map((e) => {
+    if (e.t === "open") {
+      return '<tr class="book-open">' +
+        '<td style="white-space:nowrap">' + esc(e.date) + "</td>" +
+        '<td style="min-width:110px"><a href="#" data-book-partner="' + e.pid + '" style="color:inherit;font-weight:600">' + esc(e.pn) + "</a></td>" +
+        "<td>" + esc(e.desc) + ' <span class="ci-sub">— 거래처 관리의 기초 미수(이월)</span></td>' +
+        "<td></td><td></td><td></td>" +
+        '<td class="num" style="color:#1565c0">' + won(e.prev) + "</td><td></td>" +
+        '<td class="num"><b style="color:var(--text)">' + won(e.after) + "</b></td>" +
+        '<td><span class="badge orange">이월</span></td><td></td>' +
+        '<td class="actions"><button class="btn btn-sm" data-book-partner="' + e.pid + '" title="거래처 관리에서 기초 미수 금액을 고칠 수 있습니다">거래처</button></td></tr>';
+    }
     if (e.t === "pay") {
       return '<tr style="color:#c2185b">' +
         '<td style="white-space:nowrap">' + esc(e.date) + "</td>" +
@@ -1263,11 +1279,23 @@ function salesBookEvents(opts) {
     const m = Object.assign({}, e); payKey[k] = m; merged.push(m);
   });
   ev.length = 0; merged.forEach((e) => ev.push(e));
-  ev.sort((a, b) => a.date.localeCompare(b.date) || (a.t === "trade" ? -1 : 1) - (b.t === "trade" ? -1 : 1));
+  // 기초이월(작년 말 잔액) 줄: 회계연도 첫날이 조회 기간에 들어 있으면 거래처마다 한 줄 보여준다 (표시용 — 잔액 계산엔 이미 들어 있음)
+  const fyStart = (state.fiscalYear || today().slice(0, 4)) + "-01-01";
+  if (inRange(fyStart, f.from, f.to)) {
+    state.partners.forEach((p) => {
+      const ob = Number(p.openingBalance) || 0;
+      if (ob <= 0 || (f.partnerId && p.id !== f.partnerId)) return;
+      if (q && !p.name.toLowerCase().includes(q) && !"기초이월".includes(q)) return;
+      ev.push({ t: "open", id: "", date: fyStart, pid: p.id, pn: p.name, desc: "기초이월 (작년 말 미수 잔액)", amount: ob, mall: false, memo: "", bank: "" });
+    });
+  }
+  const order = (e) => e.t === "open" ? -2 : e.t === "trade" ? -1 : 1;
+  ev.sort((a, b) => a.date.localeCompare(b.date) || order(a) - order(b));
   // 거래처별 누계 (기간 시작 전 잔액에서 출발)
   const run = {};
   ev.forEach((e) => {
     if (!(e.pid in run)) run[e.pid] = partnerBalanceBefore(e.pid, f.from || "0000-00-00", "sales");
+    if (e.t === "open") { e.prev = run[e.pid] - e.amount; e.after = run[e.pid]; return; } // 이월분은 이미 잔액에 포함 → 표시만
     e.prev = run[e.pid];
     if (e.t === "trade" && !e.mall) run[e.pid] += e.amount;
     if (e.t === "pay") run[e.pid] -= e.amount;
@@ -1282,9 +1310,23 @@ function salesBookHTML(ev, compact) {
   const shown = !compact && bookNewestFirst ? ev.slice().reverse() : ev;
   const rows = shown.map((e) => {
     const isPay = e.t === "pay";
+    const isOpen = e.t === "open";
     const neg = e.t === "trade" && e.amount < 0;
     const style = isPay ? "color:#c2185b" : neg ? "color:var(--danger)" : "";
     const taxMemo = /계산서/.test(e.memo) ? '<span class="badge green">계산서</span> ' : "";
+    if (isOpen) {
+      return '<tr class="book-open">' +
+        "<td></td>" +
+        '<td style="color:#1565c0;white-space:nowrap">' + esc(e.date) + "</td>" +
+        '<td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><a href="#" data-book-partner="' + e.pid + '" style="font-weight:600;color:inherit" title="' + esc(e.pn) + '">' + esc(e.pn) + "</a></td>" +
+        "<td>" + esc(e.desc) + "</td>" +
+        '<td class="num"><span class="badge orange">이월</span> ' + won(e.amount) + "</td>" +
+        '<td class="num" style="color:#1565c0">' + (e.prev ? won(e.prev) : "") + "</td><td></td>" +
+        '<td class="num"><b>' + won(e.after) + "</b></td>" +
+        '<td style="font-size:11.5px">거래처 관리의 기초 미수 금액</td><td></td>' +
+        (compact ? "" : '<td class="actions"><button class="btn btn-sm" data-book-partner="' + e.pid + '">거래처</button></td>') +
+        "</tr>";
+    }
     return '<tr style="' + style + '">' +
       '<td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.bank) + "</td>" +
       '<td style="color:#1565c0;white-space:nowrap">' + esc(e.date) + "</td>" +

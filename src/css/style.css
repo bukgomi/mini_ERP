@@ -290,6 +290,8 @@ table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: 
 /* 교차 줄 색상 (입력 줄·합계 줄 제외) — 마우스 올리면 hover 색이 우선 */
 table.grid tbody tr:nth-child(even):not(.book-entry):not(.total-row):not(.subtotal-row) td { background: var(--stripe-bg); }
 table.grid tbody tr:hover:not(.book-entry) td { background: var(--hover-bg); }
+/* 장부의 기초이월 줄 (작년 말 미수 — 거래처 관리의 기초 미수 금액) */
+table.grid tbody tr.book-open td { background: #fff8e1 !important; color: #6d4c41; }
 table.grid tr.total-row td { font-weight: 700; background: var(--bg); }
 table.grid tr.subtotal-row td { font-weight: 600; background: var(--bg); color: var(--text-dim); }
 table.grid td.actions { white-space: nowrap; text-align: right; }
