@@ -1,0 +1,12 @@
+{
+  "name": "mini-erp-tools",
+  "private": true,
+  "description": "미니 ERP 검사 도구 (Playwright). 앱 런타임 의존성 아님",
+  "scripts": {
+    "smoke": "node smoke.js",
+    "check": "node check_bal.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

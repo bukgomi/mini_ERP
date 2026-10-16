@@ -13,3 +13,8 @@ electron/app.html
 # OS
 Thumbs.db
 .DS_Store
+
+# 실거래 자료·데이터 (거래처명·금액·연락처) — 절대 커밋 금지
+_자료/
+tools/data/
+tools/node_modules/
